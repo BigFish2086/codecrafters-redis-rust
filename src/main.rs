@@ -1,22 +1,25 @@
-// Uncomment this block to pass the first stage
-// use std::net::TcpListener;
+use std::env;
+use std::net::TcpListener;
 
 fn main() {
-    // You can use print statements as follows for debugging, they'll be visible when running tests.
-    println!("Logs from your program will appear here!");
+    let args: Vec<String> = env::args().skip(1).collect();
+    let port = match args.len() {
+        2 if args[0] == "--port".to_string() => {
+            args[1].trim().parse::<u16>().expect("ERROR: expected port to be 0-65535")
+        }
+        _ => 6379,
+    };
 
-    // Uncomment this block to pass the first stage
-    //
-    // let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
-    //
-    // for stream in listener.incoming() {
-    //     match stream {
-    //         Ok(_stream) => {
-    //             println!("accepted new connection");
-    //         }
-    //         Err(e) => {
-    //             println!("error: {}", e);
-    //         }
-    //     }
-    // }
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", port).as_str()).unwrap();
+
+    for stream in listener.incoming() {
+        match stream {
+            Ok(_stream) => {
+                println!("accepted new connection");
+            }
+            Err(e) => {
+                println!("error: {}", e);
+            }
+        }
+    }
 }
