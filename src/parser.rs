@@ -58,7 +58,7 @@ impl Parser {
     pub fn parse_simple_error<'a>(input: &'a [u8]) -> ParseResult<'a> {
         Self::parse_until_crlf(input).map(|(result, remaining)| {
             let output = String::from(String::from_utf8_lossy(result));
-            (RESPOutput::SimpleString(output), remaining)
+            (RESPOutput::SimpleError(output), remaining)
         })
     }
 
