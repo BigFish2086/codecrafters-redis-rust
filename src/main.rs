@@ -1,10 +1,18 @@
 mod parser;
 
 use std::env;
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::io::{Read, Write};
+use std::thread;
 
 use crate::parser::Parser;
+
+fn handle_client(mut stream: TcpStream) {
+    println!("accepted new connection");
+    let mut buffer = [0u8; 1024];
+    let buffer_len = stream.read(&mut buffer).unwrap();
+    stream.write_all(b"+PONG\r\n").unwrap();
+}
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
@@ -21,19 +29,11 @@ fn main() {
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
-                println!("accepted new connection");
-                let mut buffer = [0u8; 1024];
-                loop {
-                    let buffer_len = stream.read(&mut buffer).unwrap();
-                    if buffer_len == 0 {
-                        break;
-                    }
-                    stream.write_all(b"+PONG\r\n").unwrap();
-                }
+                thread::spawn(move || handle_client(stream));
             }
             Err(e) => {
                 eprintln!("ERROR: {}", e);
             }
-        }
+        };
     }
 }
