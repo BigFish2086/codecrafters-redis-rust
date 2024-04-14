@@ -21,16 +21,15 @@ fn main() {
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
+                println!("accepted new connection");
                 let mut buffer = [0u8; 1024];
-                match stream.read(&mut buffer) {
-                    Ok(buffer_len) => {
-                        println!("accepted new connection");
-                        let content = Parser::parse_resp(&buffer[..buffer_len]).unwrap();
-                        dbg!(content);
-                        stream.write_all(b"+PONG\r\n").unwrap();
-                    },
-                    Err(e) => eprintln!("ERROR: {}", e),
-                };
+                loop {
+                    let buffer_len = stream.read(&mut buffer).unwrap();
+                    if buffer_len == 0 {
+                        break;
+                    }
+                    stream.write_all(b"+PONG\r\n").unwrap();
+                }
             }
             Err(e) => {
                 eprintln!("ERROR: {}", e);
