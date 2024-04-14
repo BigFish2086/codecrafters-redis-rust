@@ -2,7 +2,7 @@ mod parser;
 
 use std::env;
 use std::net::TcpListener;
-use std::io::Read;
+use std::io::{Read, Write};
 
 use crate::parser::Parser;
 
@@ -27,6 +27,7 @@ fn main() {
                         println!("accepted new connection");
                         let content = Parser::parse_resp(&buffer[..buffer_len]).unwrap();
                         dbg!(content);
+                        stream.write_all(b"+PONG\r\n").unwrap();
                     },
                     Err(e) => eprintln!("ERROR: {}", e),
                 };
