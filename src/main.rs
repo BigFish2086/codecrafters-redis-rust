@@ -10,8 +10,12 @@ use crate::parser::Parser;
 fn handle_client(mut stream: TcpStream) {
     println!("accepted new connection");
     let mut buffer = [0u8; 1024];
-    let buffer_len = stream.read(&mut buffer).unwrap();
-    stream.write_all(b"+PONG\r\n").unwrap();
+    loop {
+        match stream.read(&mut buffer) {
+            Ok(x) if x > 0 => stream.write_all(b"+PONG\r\n").unwrap(),
+            _ => break,
+        };
+    }
 }
 
 fn main() {
@@ -28,7 +32,7 @@ fn main() {
 
     for stream in listener.incoming() {
         match stream {
-            Ok(mut stream) => {
+            Ok(stream) => {
                 thread::spawn(move || handle_client(stream));
             }
             Err(e) => {
