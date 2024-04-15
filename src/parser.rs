@@ -1,17 +1,9 @@
+use crate::resp::RESPType;
+
 const CR: u8 = b'\r';
 const LF: u8 = b'\n';
 
-// https://redis.io/docs/reference/protocol-spec
-
-#[derive(Debug, PartialEq)]
-pub enum RESPOutput {
-    SimpleString(String),
-    SimpleError(String),
-    Integer(i64),
-    BulkString(String),
-    Array(Vec<RESPOutput>),
-    Null,
-}
+// Visit https://redis.io/docs/reference/protocol-spec to know more about this protocol specs
 
 #[derive(Debug, PartialEq, thiserror::Error)]
 pub enum ParseError {
@@ -25,7 +17,7 @@ pub enum ParseError {
     UnkownSymbol,
 }
 
-pub type ParseResult<'a> = std::result::Result<(RESPOutput, &'a [u8]), ParseError>;
+pub type ParseResult<'a> = std::result::Result<(RESPType, &'a [u8]), ParseError>;
 pub type ParseCRLFResult<'a> = std::result::Result<(&'a [u8], &'a [u8]), ParseError>;
 
 pub struct Parser {}
@@ -51,14 +43,14 @@ impl Parser {
     pub fn parse_simple_string<'a>(input: &'a [u8]) -> ParseResult<'a> {
         Self::parse_until_crlf(input).map(|(result, remaining)| {
             let output = String::from(String::from_utf8_lossy(result));
-            (RESPOutput::SimpleString(output), remaining)
+            (RESPType::SimpleString(output), remaining)
         })
     }
 
     pub fn parse_simple_error<'a>(input: &'a [u8]) -> ParseResult<'a> {
         Self::parse_until_crlf(input).map(|(result, remaining)| {
             let output = String::from(String::from_utf8_lossy(result));
-            (RESPOutput::SimpleError(output), remaining)
+            (RESPType::SimpleError(output), remaining)
         })
     }
 
@@ -66,7 +58,7 @@ impl Parser {
         let (data_len, remaining) = Self::parse_until_crlf(input)?;
         let data_len = String::from(String::from_utf8_lossy(data_len));
         if data_len == "-1" {
-            return Ok((RESPOutput::Null, "".as_bytes()));
+            return Ok((RESPType::Null, "".as_bytes()));
         }
         match data_len.parse::<usize>() {
             Ok(data_len) => {
@@ -77,7 +69,7 @@ impl Parser {
                     Err(ParseError::InvalidInput)
                 } else {
                     let data = String::from(String::from_utf8_lossy(data));
-                    Ok((RESPOutput::BulkString(data), remaining))
+                    Ok((RESPType::BulkString(data), remaining))
                 }
             }
             Err(_) => Err(ParseError::InvalidInput),
@@ -88,7 +80,7 @@ impl Parser {
         let (result, remaining) = Self::parse_until_crlf(input)?;
         let result = String::from(String::from_utf8_lossy(result));
         match result.parse::<i64>() {
-            Ok(num) => Ok((RESPOutput::Integer(num), remaining)),
+            Ok(num) => Ok((RESPType::Integer(num), remaining)),
             Err(_) => Err(ParseError::InvalidInput),
         }
     }
@@ -97,17 +89,17 @@ impl Parser {
         let (data_len, mut remaining) = Self::parse_until_crlf(input)?;
         let data_len = String::from(String::from_utf8_lossy(data_len));
         if data_len == "-1" {
-            return Ok((RESPOutput::Null, "".as_bytes()));
+            return Ok((RESPType::Null, "".as_bytes()));
         }
         match data_len.parse::<usize>() {
             Ok(data_len) => {
-                let mut elements: Vec<RESPOutput> = Vec::new();
+                let mut elements: Vec<RESPType> = Vec::new();
                 for _ in 0..data_len {
                     let (el, rem) = Self::parse_resp(remaining)?;
                     elements.push(el);
                     remaining = rem;
                 }
-                Ok((RESPOutput::Array(elements), remaining))
+                Ok((RESPType::Array(elements), remaining))
             }
             Err(_) => Err(ParseError::InvalidInput),
         }

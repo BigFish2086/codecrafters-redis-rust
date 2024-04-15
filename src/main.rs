@@ -1,4 +1,6 @@
+mod resp;
 mod parser;
+mod command;
 
 use std::env;
 use std::net::{TcpListener, TcpStream};
@@ -6,13 +8,20 @@ use std::io::{Read, Write};
 use std::thread;
 
 use crate::parser::Parser;
+use crate::command::Cmd;
 
 fn handle_client(mut stream: TcpStream) {
     println!("accepted new connection");
     let mut buffer = [0u8; 1024];
     loop {
         match stream.read(&mut buffer) {
-            Ok(x) if x > 0 => stream.write_all(b"+PONG\r\n").unwrap(),
+            Ok(x) if x > 0 => {
+                let (parsed, _rem) = Parser::parse_resp(&buffer).unwrap();
+                match Cmd::from_resp(parsed) {
+                    Ok(cmd) => stream.write_all(cmd.respond().serialize().as_bytes()).unwrap(),
+                    Err(e) => eprintln!("{}", e),
+                };
+            }
             _ => break,
         };
     }
