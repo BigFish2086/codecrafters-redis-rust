@@ -1,5 +1,6 @@
 use crate::{command::Cmd, config::Config, resp::RESPType};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use tokio::time::{Duration, Instant};
 
@@ -29,12 +30,12 @@ impl DataEntry {
 
 #[derive(Debug)]
 pub struct Redis {
-    pub cfg: Config,
+    pub cfg: Arc<Config>,
     pub dict: HashMap<String, DataEntry>,
 }
 
 impl Redis {
-    pub fn with_config(cfg: Config) -> Self {
+    pub fn with_config(cfg: Arc<Config>) -> Self {
         Self {
             cfg,
             dict: HashMap::default(),

@@ -17,7 +17,7 @@ impl fmt::Display for RESPType {
 }
 
 impl RESPType {
-    pub fn serialize(self) -> String {
+    pub fn serialize(&self) -> String {
         use RESPType::*;
         match self {
             SimpleString(s) => format!("+{}\r\n", s),

@@ -4,10 +4,17 @@ mod parser;
 mod redis;
 mod resp;
 
-use crate::{command::Cmd, config::Config, parser::Parser, redis::Redis};
+use crate::{
+    command::Cmd,
+    config::{Config, Role},
+    parser::Parser,
+    redis::Redis,
+    resp::RESPType,
+};
+use anyhow::Context;
 use std::{env, sync::Arc};
 use tokio::{
-    io::Interest,
+    io::{AsyncWriteExt, Interest},
     net::{TcpListener, TcpStream},
     sync::Mutex,
 };
@@ -31,7 +38,7 @@ async fn handle_client(stream: TcpStream, redis: Arc<Mutex<Redis>>) -> anyhow::R
         let resp = redis.lock().await.apply_cmd(cmd);
         if ready.is_writable() {
             match stream.try_write(resp.serialize().as_bytes()) {
-                Ok(n) => println!("write {} bytes", n),
+                Ok(_n) => (),
                 Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
                 Err(e) => return Err(e.into()),
             }
@@ -41,13 +48,29 @@ async fn handle_client(stream: TcpStream, redis: Arc<Mutex<Redis>>) -> anyhow::R
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let cfg = Config::try_from(env::args())?;
+    let cfg = Arc::new(Config::try_from(env::args())?);
 
     let listener = TcpListener::bind(format!("127.0.0.1:{}", cfg.service_port).as_str())
         .await
         .unwrap();
 
-    let redis = Arc::new(Mutex::new(Redis::with_config(cfg)));
+    let redis = Arc::new(Mutex::new(Redis::with_config(Arc::clone(&cfg))));
+
+    match cfg.replica_of.role {
+        Role::Slave{ref host, ref port} => {
+            TcpStream::connect(format!("{}:{}", host, port))
+                .await
+                .context("slave replica can't connect to its master")?
+                .write_all(
+                    &RESPType::BulkString("PING".to_string())
+                    .serialize()
+                    .as_bytes(),
+                    )
+                .await
+                .context("slave PING can't reach its master")?;
+        }
+        _ => (),
+    };
 
     loop {
         match listener.accept().await {
