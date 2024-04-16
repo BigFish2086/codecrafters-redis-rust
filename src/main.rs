@@ -77,7 +77,7 @@ async fn main() -> anyhow::Result<()> {
                 let (parsed, _rem) = Parser::parse_resp(&buffer[..n])?;
                 match parsed == expexted {
                     true => Ok(()),
-                    false => bail!("slave replica didn't receive expected response"),
+                    false => bail!(format!("slave replica received `{}` but expected response `{}`", parsed, expexted)),
                 }
             };
 
@@ -87,7 +87,11 @@ async fn main() -> anyhow::Result<()> {
                 .write_all(&resp_array_of_bulks!("PING").serialize().as_bytes())
                 .await
                 .context("slave PING can't reach its master")?;
-            validate_response(Arc::clone(&stream), resp_array_of_bulks!("PONG")).await?;
+            validate_response(
+                Arc::clone(&stream),
+                RESPType::SimpleString("PONG".to_string()),
+            )
+            .await?;
 
             stream
                 .lock()
