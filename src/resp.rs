@@ -1,3 +1,5 @@
+use std::fmt;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum RESPType {
     SimpleString(String),
@@ -6,6 +8,12 @@ pub enum RESPType {
     BulkString(String),
     Array(Vec<RESPType>),
     Null,
+}
+
+impl fmt::Display for RESPType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 impl RESPType {
@@ -27,5 +35,3 @@ impl RESPType {
         }
     }
 }
-
-

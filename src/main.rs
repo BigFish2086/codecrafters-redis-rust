@@ -1,33 +1,45 @@
-mod resp;
-mod parser;
 mod command;
+mod parser;
+mod redis;
+mod resp;
 
-use std::env;
-use std::net::{TcpListener, TcpStream};
-use std::io::{Read, Write};
-use std::thread;
+use crate::{command::Cmd, parser::Parser, redis::Redis};
+use std::{env, sync::Arc};
+use tokio::{
+    io::Interest,
+    net::{TcpListener, TcpStream},
+    sync::Mutex,
+};
 
-use crate::parser::Parser;
-use crate::command::Cmd;
-
-fn handle_client(mut stream: TcpStream) {
+async fn handle_client(stream: TcpStream, redis: Arc<Mutex<Redis>>) -> anyhow::Result<()> {
     println!("accepted new connection");
-    let mut buffer = [0u8; 1024];
     loop {
-        match stream.read(&mut buffer) {
-            Ok(x) if x > 0 => {
-                let (parsed, _rem) = Parser::parse_resp(&buffer).unwrap();
-                match Cmd::from_resp(parsed) {
-                    Ok(cmd) => stream.write_all(cmd.respond().serialize().as_bytes()).unwrap(),
-                    Err(e) => eprintln!("{}", e),
-                };
-            }
-            _ => break,
+        let ready = stream
+            .ready(Interest::READABLE | Interest::WRITABLE)
+            .await?;
+        stream.readable().await?;
+        let mut buffer = vec![0; 1024];
+        let n = match stream.try_read(&mut buffer) {
+            Ok(0) => return Ok(()),
+            Ok(n) => n,
+            Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
+            Err(e) => return Err(e.into()),
         };
+        let (parsed, _rem) = Parser::parse_resp(&buffer[..n])?;
+        let cmd = Cmd::from_resp(parsed)?;
+        let resp = redis.lock().await.apply_cmd(cmd);
+        if ready.is_writable() {
+            match stream.try_write(resp.serialize().as_bytes()) {
+                Ok(n) => println!("write {} bytes", n),
+                Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
+                Err(e) => return Err(e.into()),
+            }
+        }
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
     let args: Vec<String> = env::args().skip(1).collect();
     let port = match args.len() {
         2 if args[0] == "--port".to_string() => args[1]
@@ -37,12 +49,16 @@ fn main() {
         _ => 6379,
     };
 
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", port).as_str()).unwrap();
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", port).as_str())
+        .await
+        .unwrap();
+    let redis = Arc::new(Mutex::new(Redis::default()));
 
-    for stream in listener.incoming() {
-        match stream {
-            Ok(stream) => {
-                thread::spawn(move || handle_client(stream));
+    loop {
+        match listener.accept().await {
+            Ok((stream, _)) => {
+                let redis = redis.clone();
+                tokio::spawn(async move { handle_client(stream, redis).await });
             }
             Err(e) => {
                 eprintln!("ERROR: {}", e);
