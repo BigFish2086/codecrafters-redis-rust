@@ -54,6 +54,11 @@ impl Redis {
                 }
                 None => RESPType::Null,
             },
+            Info(section) if section.is_none() || section.as_deref().unwrap().to_lowercase() == "replication" => {
+                RESPType::BulkString("role:master".to_string())
+            },
+            _ => unimplemented!("Handle Info Section Better"),
         }
     }
 }
+
