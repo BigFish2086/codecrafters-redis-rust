@@ -11,7 +11,7 @@ use crate::{
     redis::Redis,
     resp::RESPType,
 };
-use anyhow::Context;
+use anyhow::{bail, Context};
 use std::{env, sync::Arc};
 use tokio::{
     io::{AsyncWriteExt, Interest},
@@ -58,16 +58,68 @@ async fn main() -> anyhow::Result<()> {
 
     match cfg.replica_of.role {
         Role::Slave { ref host, ref port } => {
-            TcpStream::connect(format!("{}:{}", host, port))
+            let stream = TcpStream::connect(format!("{}:{}", host, port))
                 .await
-                .context("slave replica can't connect to its master")?
+                .context("slave replica can't connect to its master")?;
+            let stream = Arc::new(Mutex::new(stream));
+
+            let validate_response = |stream: Arc<Mutex<TcpStream>>, expexted: RESPType| async move {
+                let stream = stream.lock().await;
+                let mut buffer = vec![0; 1024];
+                let n = loop {
+                    stream.readable().await?;
+                    match stream.try_read(&mut buffer) {
+                        Ok(n) => break n,
+                        Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
+                        Err(e) => return Err(e.into()),
+                    };
+                };
+                let (parsed, _rem) = Parser::parse_resp(&buffer[..n])?;
+                match parsed == expexted {
+                    true => Ok(()),
+                    false => bail!("slave replica didn't receive expected response"),
+                }
+            };
+
+            stream
+                .lock()
+                .await
+                .write_all(&resp_array_of_bulks!("PING").serialize().as_bytes())
+                .await
+                .context("slave PING can't reach its master")?;
+            validate_response(Arc::clone(&stream), resp_array_of_bulks!("PONG")).await?;
+
+            stream
+                .lock()
+                .await
                 .write_all(
-                    &RESPType::Array(vec![RESPType::BulkString("PING".to_string())])
+                    &resp_array_of_bulks!("REPLCONF", "listening-port", cfg.service_port)
                         .serialize()
                         .as_bytes(),
                 )
                 .await
-                .context("slave PING can't reach its master")?;
+                .context("slave REPLCONF can't reach its master")?;
+            validate_response(
+                Arc::clone(&stream),
+                RESPType::SimpleString("OK".to_string()),
+            )
+            .await?;
+
+            stream
+                .lock()
+                .await
+                .write_all(
+                    &resp_array_of_bulks!("REPLCONF", "capa", "psync2")
+                        .serialize()
+                        .as_bytes(),
+                )
+                .await
+                .context("slave REPLCONF can't reach its master")?;
+            validate_response(
+                Arc::clone(&stream),
+                RESPType::SimpleString("OK".to_string()),
+            )
+            .await?;
         }
         _ => (),
     };

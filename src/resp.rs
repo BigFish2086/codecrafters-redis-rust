@@ -35,3 +35,10 @@ impl RESPType {
         }
     }
 }
+
+#[macro_export]
+macro_rules! resp_array_of_bulks {
+    ($($args:expr),*) => {{
+        RESPType::Array(vec![$(RESPType::BulkString($args.to_string())),*])
+    }}
+}
