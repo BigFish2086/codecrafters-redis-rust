@@ -57,15 +57,15 @@ async fn main() -> anyhow::Result<()> {
     let redis = Arc::new(Mutex::new(Redis::with_config(Arc::clone(&cfg))));
 
     match cfg.replica_of.role {
-        Role::Slave{ref host, ref port} => {
+        Role::Slave { ref host, ref port } => {
             TcpStream::connect(format!("{}:{}", host, port))
                 .await
                 .context("slave replica can't connect to its master")?
                 .write_all(
-                    &RESPType::BulkString("PING".to_string())
-                    .serialize()
-                    .as_bytes(),
-                    )
+                    &RESPType::Array(vec![RESPType::BulkString("PING".to_string())])
+                        .serialize()
+                        .as_bytes(),
+                )
                 .await
                 .context("slave PING can't reach its master")?;
         }
