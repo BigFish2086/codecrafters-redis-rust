@@ -113,7 +113,7 @@ async fn main() -> anyhow::Result<()> {
                 .lock()
                 .await
                 .write_all(
-                    &resp_array_of_bulks!("REPLCONF", "capa", "psync2")
+                    &resp_array_of_bulks!("REPLCONF", "capa", "eof", "capa", "psync2")
                         .serialize()
                         .as_bytes(),
                 )
@@ -124,7 +124,20 @@ async fn main() -> anyhow::Result<()> {
                 RESPType::SimpleString("OK".to_string()),
             )
             .await?;
+
+            // TODO: add response validation for PSYNC cmd
+            stream
+                .lock()
+                .await
+                .write_all(
+                    &resp_array_of_bulks!("PSYNC", "?", "-1")
+                    .serialize()
+                    .as_bytes(),
+                    )
+                .await
+                .context("slave PSYNC can't reach its master")?;
         }
+
         _ => (),
     };
 
