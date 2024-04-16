@@ -27,7 +27,7 @@ impl DataEntry {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct Redis {
     pub cfg: Config,
     pub dict: HashMap<String, DataEntry>,
