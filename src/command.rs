@@ -5,7 +5,11 @@ use std::fmt;
 pub enum Cmd {
     Ping,
     Echo(String),
-    Set(String, String),
+    Set {
+        key: String,
+        value: String,
+        px: Option<u64>,
+    },
     Get(String),
 }
 
@@ -19,10 +23,12 @@ impl fmt::Display for Cmd {
 pub enum CmdError {
     #[error("ERROR: No commands where provided")]
     NoCmdsProvided,
-    #[error("ERROR: Invalid command type, expected type was RESP::`{expected}`,but found RESP::`{found}`")]
-    InvalidCmdType { expected: String, found: String },
-    #[error("ERROR: Missing `{arg_name}` argument for the command `{cmd_name}`")]
-    MissingArgs { arg_name: String, cmd_name: String },
+    #[error("ERROR: Invalid command RESP type")]
+    InvalidCmdType,
+    #[error("ERROR: Missing arguments for current command")]
+    MissingArgs,
+    #[error("ERROR: Invalid argument type")]
+    InvalidArg,
     #[error("ERROR: Provided command is not implemented")]
     NotImplementedCmd,
 }
@@ -33,52 +39,50 @@ impl Cmd {
             let cmd_type = Self::unpack_bulk_string(array.get(0).ok_or(CmdError::NoCmdsProvided)?)?;
             match cmd_type.to_lowercase().as_str() {
                 "ping" => Ok(Self::Ping),
-                "echo" => {
-                    let msg =
-                        Self::unpack_bulk_string(array.get(1).ok_or(CmdError::MissingArgs {
-                            arg_name: "message".to_string(),
-                            cmd_name: "ECHO".to_string(),
-                        })?)?;
-                    Ok(Self::Echo(msg.clone()))
-                }
-                "set" => {
-                    let key =
-                        Self::unpack_bulk_string(array.get(1).ok_or(CmdError::MissingArgs {
-                            arg_name: "Key".to_string(),
-                            cmd_name: "SET".to_string(),
-                        })?)?;
-                    let value =
-                        Self::unpack_bulk_string(array.get(2).ok_or(CmdError::MissingArgs {
-                            arg_name: "Value".to_string(),
-                            cmd_name: "SET".to_string(),
-                        })?)?;
-                    Ok(Self::Set(key.to_string(), value.to_string()))
-                }
-                "get" => {
-                    let key =
-                        Self::unpack_bulk_string(array.get(1).ok_or(CmdError::MissingArgs {
-                            arg_name: "Key".to_string(),
-                            cmd_name: "GET".to_string(),
-                        })?)?;
-                    Ok(Self::Get(key.clone()))
-                }
+                "echo" => Self::echo_cmd(array),
+                "set" => Self::set_cmd(array),
+                "get" => Self::get_cmd(array),
                 _ => Err(CmdError::NotImplementedCmd),
             }
         } else {
-            Err(CmdError::InvalidCmdType {
-                expected: "Array".to_string(),
-                found: resp.to_string(),
-            })
+            Err(CmdError::InvalidCmdType)
         }
+    }
+
+    fn echo_cmd(args: Vec<RESPType>) -> Result<Self, CmdError> {
+        let msg = Self::unpack_bulk_string(args.get(1).ok_or(CmdError::MissingArgs)?)?;
+        Ok(Self::Echo(msg.clone()))
+    }
+
+    fn set_cmd(args: Vec<RESPType>) -> Result<Self, CmdError> {
+        let key = Self::unpack_bulk_string(args.get(1).ok_or(CmdError::MissingArgs)?)?;
+        let value = Self::unpack_bulk_string(args.get(2).ok_or(CmdError::MissingArgs)?)?;
+        let px = match args.get(3) {
+            Some(_) => {
+                let px_value = Self::unpack_bulk_string(args.get(4).ok_or(CmdError::MissingArgs)?)?;
+                match px_value.parse::<u64>() {
+                    Ok(px_value) => Some(px_value),
+                    Err(_) => return Err(CmdError::InvalidArg),
+                }
+            }
+            None => None,
+        };
+        Ok(Self::Set {
+            key: key.to_string(),
+            value: value.to_string(),
+            px,
+        })
+    }
+
+    fn get_cmd(args: Vec<RESPType>) -> Result<Self, CmdError> {
+        let key = Self::unpack_bulk_string(args.get(1).ok_or(CmdError::MissingArgs)?)?;
+        Ok(Self::Get(key.clone()))
     }
 
     fn unpack_bulk_string(resp: &RESPType) -> Result<String, CmdError> {
         match resp {
             RESPType::BulkString(s) => Ok(s.clone()),
-            _ => Err(CmdError::InvalidCmdType {
-                expected: "BulkString".to_string(),
-                found: resp.to_string(),
-            }),
+            _ => Err(CmdError::InvalidCmdType),
         }
     }
 }
