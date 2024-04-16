@@ -92,7 +92,7 @@ impl Cmd {
 
     fn replconf_cmd(args: Vec<RESPType>) -> Result<Self, CmdError> {
         let mut repl_configs = Vec::new();
-        while let Some(conf) = args.iter().next() {
+        for conf in &args {
             let conf_parsed = Self::unpack_bulk_string(conf)?;
             repl_configs.push(conf_parsed);
         }
