@@ -12,6 +12,7 @@ pub enum Cmd {
     },
     Get(String),
     Info(Option<String>),
+    ReplConf(Vec<String>),
 }
 
 impl fmt::Display for Cmd {
@@ -44,6 +45,7 @@ impl Cmd {
                 "set" => Self::set_cmd(array),
                 "get" => Self::get_cmd(array),
                 "info" => Self::info_cmd(array),
+                "replconf" => Self::replconf_cmd(array),
                 _ => Err(CmdError::NotImplementedCmd),
             }
         } else {
@@ -86,6 +88,15 @@ impl Cmd {
             Some(section) => Ok(Self::Info(Some(Self::unpack_bulk_string(section)?))),
             None => Ok(Self::Info(None)),
         }
+    }
+
+    fn replconf_cmd(args: Vec<RESPType>) -> Result<Self, CmdError> {
+        let mut repl_configs = Vec::new();
+        while let Some(conf) = args.iter().next() {
+            let conf_parsed = Self::unpack_bulk_string(conf)?;
+            repl_configs.push(conf_parsed);
+        }
+        Ok(Self::ReplConf(repl_configs))
     }
 
     fn unpack_bulk_string(resp: &RESPType) -> Result<String, CmdError> {

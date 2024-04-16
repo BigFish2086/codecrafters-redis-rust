@@ -63,6 +63,7 @@ impl Redis {
                 None => RESPType::Null,
             },
             Info(section) => RESPType::BulkString(self.cfg.get_info(section)),
+            ReplConf(_) => RESPType::SimpleString("OK".to_string()),
         }
     }
 }
