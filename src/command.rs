@@ -11,6 +11,7 @@ pub enum Cmd {
         px: Option<u64>,
     },
     Get(String),
+    Info(Option<String>),
 }
 
 impl fmt::Display for Cmd {
@@ -42,6 +43,7 @@ impl Cmd {
                 "echo" => Self::echo_cmd(array),
                 "set" => Self::set_cmd(array),
                 "get" => Self::get_cmd(array),
+                "info" => Self::info_cmd(array),
                 _ => Err(CmdError::NotImplementedCmd),
             }
         } else {
@@ -77,6 +79,13 @@ impl Cmd {
     fn get_cmd(args: Vec<RESPType>) -> Result<Self, CmdError> {
         let key = Self::unpack_bulk_string(args.get(1).ok_or(CmdError::MissingArgs)?)?;
         Ok(Self::Get(key.clone()))
+    }
+
+    fn info_cmd(args: Vec<RESPType>) -> Result<Self, CmdError> {
+        match args.get(1) {
+            Some(section) => Ok(Self::Info(Some(Self::unpack_bulk_string(section)?))),
+            None => Ok(Self::Info(None)),
+        }
     }
 
     fn unpack_bulk_string(resp: &RESPType) -> Result<String, CmdError> {
