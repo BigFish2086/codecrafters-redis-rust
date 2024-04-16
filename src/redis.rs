@@ -1,5 +1,4 @@
-use crate::command::Cmd;
-use crate::resp::RESPType;
+use crate::{command::Cmd, config::Config, resp::RESPType};
 use std::collections::HashMap;
 
 use tokio::time::{Duration, Instant};
@@ -30,10 +29,18 @@ impl DataEntry {
 
 #[derive(Default, Debug)]
 pub struct Redis {
+    pub cfg: Config,
     pub dict: HashMap<String, DataEntry>,
 }
 
 impl Redis {
+    pub fn with_config(cfg: Config) -> Self {
+        Self {
+            cfg,
+            dict: HashMap::default(),
+        }
+    }
+
     pub fn apply_cmd(&mut self, cmd: Cmd) -> RESPType {
         use Cmd::*;
         match cmd {
@@ -54,11 +61,7 @@ impl Redis {
                 }
                 None => RESPType::Null,
             },
-            Info(section) if section.is_none() || section.as_deref().unwrap().to_lowercase() == "replication" => {
-                RESPType::BulkString("role:master".to_string())
-            },
-            _ => unimplemented!("Handle Info Section Better"),
+            Info(section) => RESPType::BulkString(self.cfg.get_info(section)),
         }
     }
 }
-

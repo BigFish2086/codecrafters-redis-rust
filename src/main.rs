@@ -1,9 +1,10 @@
 mod command;
+mod config;
 mod parser;
 mod redis;
 mod resp;
 
-use crate::{command::Cmd, parser::Parser, redis::Redis};
+use crate::{command::Cmd, config::Config, parser::Parser, redis::Redis};
 use std::{env, sync::Arc};
 use tokio::{
     io::Interest,
@@ -40,19 +41,13 @@ async fn handle_client(stream: TcpStream, redis: Arc<Mutex<Redis>>) -> anyhow::R
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let args: Vec<String> = env::args().skip(1).collect();
-    let port = match args.len() {
-        2 if args[0] == "--port".to_string() => args[1]
-            .trim()
-            .parse::<u16>()
-            .expect("ERROR: expected port to be 0-65535"),
-        _ => 6379,
-    };
+    let cfg = Config::try_from(env::args())?;
 
-    let listener = TcpListener::bind(format!("127.0.0.1:{}", port).as_str())
+    let listener = TcpListener::bind(format!("127.0.0.1:{}", cfg.service_port).as_str())
         .await
         .unwrap();
-    let redis = Arc::new(Mutex::new(Redis::default()));
+
+    let redis = Arc::new(Mutex::new(Redis::with_config(cfg)));
 
     loop {
         match listener.accept().await {
