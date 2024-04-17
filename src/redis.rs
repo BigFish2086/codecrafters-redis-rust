@@ -64,6 +64,11 @@ impl Redis {
             },
             Info(section) => RESPType::BulkString(self.cfg.get_info(section)),
             ReplConf(_) => RESPType::SimpleString("OK".to_string()),
+            Psync { replid, .. } if replid == "?".to_string() => RESPType::SimpleString(format!(
+                "FULLRESYNC {} 0",
+                &self.cfg.replica_of.master_replid
+            )),
+            Psync { .. } => todo!(),
         }
     }
 }

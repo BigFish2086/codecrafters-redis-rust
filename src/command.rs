@@ -13,6 +13,10 @@ pub enum Cmd {
     Get(String),
     Info(Option<String>),
     ReplConf(Vec<String>),
+    Psync {
+        replid: String,
+        offset: u64,
+    },
 }
 
 impl fmt::Display for Cmd {
@@ -46,6 +50,7 @@ impl Cmd {
                 "get" => Self::get_cmd(array),
                 "info" => Self::info_cmd(array),
                 "replconf" => Self::replconf_cmd(array),
+                "psync" => Self::psync_cmd(array),
                 _ => Err(CmdError::NotImplementedCmd),
             }
         } else {
@@ -97,6 +102,13 @@ impl Cmd {
             repl_configs.push(conf_parsed);
         }
         Ok(Self::ReplConf(repl_configs))
+    }
+
+    fn psync_cmd(args: Vec<RESPType>) -> Result<Self, CmdError> {
+        let replid = Self::unpack_bulk_string(args.get(1).ok_or(CmdError::MissingArgs)?)?;
+        let offset = Self::unpack_bulk_string(args.get(2).ok_or(CmdError::MissingArgs)?)?;
+        let offset = offset.parse::<u64>().map_err(|_| CmdError::InvalidArg)?;
+        Ok(Self::Psync { replid, offset })
     }
 
     fn unpack_bulk_string(resp: &RESPType) -> Result<String, CmdError> {
