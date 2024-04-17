@@ -44,27 +44,28 @@ impl Redis {
 
     pub fn apply_cmd(&mut self, cmd: Cmd) -> RESPType {
         use Cmd::*;
+        use RESPType::*;
         match cmd {
-            Ping => RESPType::SimpleString("PONG".to_string()),
-            Echo(msg) => RESPType::BulkString(msg),
+            Ping => SimpleString("PONG".to_string()),
+            Echo(msg) => BulkString(msg),
             Set { key, value, px } => {
                 self.dict.insert(key, DataEntry::new(value, px));
-                RESPType::SimpleString("OK".to_string())
+                SimpleString("OK".to_string())
             }
             Get(key) => match self.dict.get(&key) {
                 Some(data) => {
                     if data.is_expired() {
                         self.dict.remove(&key);
-                        RESPType::Null
+                        Null
                     } else {
-                        RESPType::BulkString(data.value.clone())
+                        BulkString(data.value.clone())
                     }
                 }
-                None => RESPType::Null,
+                None => Null,
             },
-            Info(section) => RESPType::BulkString(self.cfg.get_info(section)),
-            ReplConf(_) => RESPType::SimpleString("OK".to_string()),
-            Psync { replid, .. } if replid == "?".to_string() => RESPType::SimpleString(format!(
+            Info(section) => BulkString(self.cfg.get_info(section)),
+            ReplConf(_) => SimpleString("OK".to_string()),
+            Psync { replid, offset: -1 } if replid == "?".to_string() => SimpleString(format!(
                 "FULLRESYNC {} 0",
                 &self.cfg.replica_of.master_replid
             )),

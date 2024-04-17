@@ -15,7 +15,7 @@ pub enum Cmd {
     ReplConf(Vec<String>),
     Psync {
         replid: String,
-        offset: u64,
+        offset: i64,
     },
 }
 
@@ -107,7 +107,7 @@ impl Cmd {
     fn psync_cmd(args: Vec<RESPType>) -> Result<Self, CmdError> {
         let replid = Self::unpack_bulk_string(args.get(1).ok_or(CmdError::MissingArgs)?)?;
         let offset = Self::unpack_bulk_string(args.get(2).ok_or(CmdError::MissingArgs)?)?;
-        let offset = offset.parse::<u64>().map_err(|_| CmdError::InvalidArg)?;
+        let offset = offset.parse::<i64>().map_err(|_| CmdError::InvalidArg)?;
         Ok(Self::Psync { replid, offset })
     }
 
