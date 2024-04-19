@@ -17,8 +17,8 @@ pub enum ParseError {
     UnkownSymbol,
 }
 
-pub type ParseResult<'a> = std::result::Result<(RESPType, &'a [u8]), ParseError>;
-pub type ParseCRLFResult<'a> = std::result::Result<(&'a [u8], &'a [u8]), ParseError>;
+type ParseResult<'a> = std::result::Result<(RESPType, &'a [u8]), ParseError>;
+type ParseCRLFResult<'a> = std::result::Result<(&'a [u8], &'a [u8]), ParseError>;
 
 pub struct Parser {}
 

@@ -6,9 +6,9 @@ use tokio::time::{Duration, Instant};
 
 #[derive(Debug)]
 pub struct DataEntry {
-    value: String,
-    created_at: Instant,
-    expired_millis: Option<Duration>,
+    pub value: String,
+    pub created_at: Instant,
+    pub expired_millis: Option<Duration>,
 }
 
 impl DataEntry {

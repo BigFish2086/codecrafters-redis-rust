@@ -42,7 +42,7 @@ pub enum CmdError {
 impl Cmd {
     pub fn from_resp(resp: RESPType) -> Result<Self, CmdError> {
         if let RESPType::Array(array) = resp {
-            let cmd_type = Self::unpack_bulk_string(array.get(0).ok_or(CmdError::NoCmdsProvided)?)?;
+            let cmd_type = Self::unpack_bulk_string(array.get(0).ok_or_else(|| CmdError::NoCmdsProvided)?)?;
             match cmd_type.to_lowercase().as_str() {
                 "ping" => Ok(Self::Ping),
                 "echo" => Self::echo_cmd(array),
@@ -59,16 +59,16 @@ impl Cmd {
     }
 
     fn echo_cmd(args: Vec<RESPType>) -> Result<Self, CmdError> {
-        let msg = Self::unpack_bulk_string(args.get(1).ok_or(CmdError::MissingArgs)?)?;
+        let msg = Self::unpack_bulk_string(args.get(1).ok_or_else(|| CmdError::MissingArgs)?)?;
         Ok(Self::Echo(msg.clone()))
     }
 
     fn set_cmd(args: Vec<RESPType>) -> Result<Self, CmdError> {
-        let key = Self::unpack_bulk_string(args.get(1).ok_or(CmdError::MissingArgs)?)?;
-        let value = Self::unpack_bulk_string(args.get(2).ok_or(CmdError::MissingArgs)?)?;
+        let key = Self::unpack_bulk_string(args.get(1).ok_or_else(|| CmdError::MissingArgs)?)?;
+        let value = Self::unpack_bulk_string(args.get(2).ok_or_else(|| CmdError::MissingArgs)?)?;
         let px = match args.get(3) {
             Some(_) => {
-                let px_value = Self::unpack_bulk_string(args.get(4).ok_or(CmdError::MissingArgs)?)?;
+                let px_value = Self::unpack_bulk_string(args.get(4).ok_or_else(|| CmdError::MissingArgs)?)?;
                 match px_value.parse::<u64>() {
                     Ok(px_value) => Some(px_value),
                     Err(_) => return Err(CmdError::InvalidArg),
@@ -84,7 +84,7 @@ impl Cmd {
     }
 
     fn get_cmd(args: Vec<RESPType>) -> Result<Self, CmdError> {
-        let key = Self::unpack_bulk_string(args.get(1).ok_or(CmdError::MissingArgs)?)?;
+        let key = Self::unpack_bulk_string(args.get(1).ok_or_else(|| CmdError::MissingArgs)?)?;
         Ok(Self::Get(key.clone()))
     }
 
@@ -105,8 +105,8 @@ impl Cmd {
     }
 
     fn psync_cmd(args: Vec<RESPType>) -> Result<Self, CmdError> {
-        let replid = Self::unpack_bulk_string(args.get(1).ok_or(CmdError::MissingArgs)?)?;
-        let offset = Self::unpack_bulk_string(args.get(2).ok_or(CmdError::MissingArgs)?)?;
+        let replid = Self::unpack_bulk_string(args.get(1).ok_or_else(|| CmdError::MissingArgs)?)?;
+        let offset = Self::unpack_bulk_string(args.get(2).ok_or_else(|| CmdError::MissingArgs)?)?;
         let offset = offset.parse::<i64>().map_err(|_| CmdError::InvalidArg)?;
         Ok(Self::Psync { replid, offset })
     }
