@@ -1,6 +1,7 @@
 use anyhow::Context;
 use std::fmt::{self, Error, Formatter};
 use std::{env, net::Ipv4Addr};
+use crate::utils::random_string;
 
 const DEFAULT_PORT: u16 = 6379;
 
@@ -78,7 +79,7 @@ impl TryFrom<env::Args> for Config {
             service_port: DEFAULT_PORT,
             replica_of: ReplicaInfo {
                 role: Role::Master,
-                master_replid: "8371b4fb1155b71f4a04d3e1bc3e18c4a990aeeb".to_string(),
+                master_replid: random_string(40),
                 master_repl_offset: 0,
             },
         };

@@ -23,3 +23,7 @@ anyhow = "1.0.59"                                   # error handling
 bytes = "1.3.0"                                     # helps manage buffers
 thiserror = "1.0.32"                                # error handling
 tokio = { version = "1.23.0", features = ["full"] } # async networking
+
+hex = "0.4.3"                                       # hex encode/decode
+rand = "0.8.5"                                      # random generator
+lzf = "1.0.0"                                       # lzf compress/decompress

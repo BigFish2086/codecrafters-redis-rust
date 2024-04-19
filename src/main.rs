@@ -1,13 +1,16 @@
 mod command;
 mod config;
 mod parser;
+mod rdb;
 mod redis;
 mod resp;
+mod utils;
 
 use crate::{
     command::Cmd,
     config::{Config, Role},
     parser::Parser,
+    rdb::{RDBFile, RDBParser},
     redis::Redis,
     resp::RESPType,
 };
