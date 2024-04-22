@@ -24,18 +24,24 @@ pub enum ValueType {
 impl ValueType {
     pub fn new(data: String) -> Self {
         if let Ok(as_i8) = data.parse::<i8>() {
-            return Self::I8Int(as_i8);
+            Self::I8Int(as_i8)
         } else if let Ok(as_i16) = data.parse::<i16>() {
-            return Self::I16Int(as_i16);
+            Self::I16Int(as_i16)
         } else if let Ok(as_i32) = data.parse::<i32>() {
-            return Self::I32Int(as_i32);
+            Self::I32Int(as_i32)
         } else if data.len() < COMPRESS_AT_LENGTH as usize {
-            return Self::IntOrString(data);
+            Self::IntOrString(data)
         } else {
-            return Self::CompressedString {
-                real_data_len: data.len(),
-                compressed_data: lzf::compress(&data.as_bytes()).unwrap(),
-            };
+            match lzf::compress(&data.as_bytes()) {
+                Ok(compressed_data) => {
+                    Self::CompressedString {
+                        real_data_len: data.len(),
+                        compressed_data,
+                    }
+                }
+                Err(lzf::LzfError::NoCompressionPossible) => Self::IntOrString(data),
+                _ => unreachable!(),
+            }
         }
     }
 

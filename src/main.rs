@@ -61,11 +61,14 @@ async fn main() -> anyhow::Result<()> {
             },
         });
 
-        // DataEntry::new(utils::random_string(300), None),
         let redis = Arc::new(Mutex::new(Redis::with_config(Arc::clone(&cfg))));
         redis.lock().await.dict.insert(
             ValueType::new("a".to_string()),
             DataEntry::new("-500".to_string(), None),
+        );
+        redis.lock().await.dict.insert(
+            ValueType::new("z".to_string()),
+            DataEntry::new(utils::random_string(300), None),
         );
         redis.lock().await.dict.insert(
             ValueType::new("b".to_string()),
