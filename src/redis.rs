@@ -267,10 +267,10 @@ impl Redis {
                 rdb_content.extend_from_slice(&self.as_rdb()[..]);
                 rdb_content.push(crate::constants::EOF);
 
-                let msg_header = format!("+FULLRESYNC {} 0\r\n", &self.cfg.replica_of.master_replid);
-                let msg_body = hex::encode(rdb_content);
-                let msg_body = format!("${}\r\n{}", msg_body.len(), msg_body);
-                WildCard(format!("{}{}", msg_header, msg_body))
+                let mut msg: Vec<u8> = format!("+FULLRESYNC {} 0\r\n", &self.cfg.replica_of.master_replid).as_bytes().to_vec();
+                msg.extend_from_slice(format!("${}\r\n", rdb_content.len()).as_bytes());
+                msg.extend_from_slice(&rdb_content);
+                WildCard(msg)
             }
             Psync { .. } => todo!(),
         }

@@ -7,7 +7,7 @@ pub enum RESPType {
     Integer(i64),
     BulkString(String),
     Array(Vec<RESPType>),
-    WildCard(String),
+    WildCard(Vec<u8>),
     Null,
 }
 
@@ -18,22 +18,22 @@ impl fmt::Display for RESPType {
 }
 
 impl RESPType {
-    pub fn serialize(&self) -> String {
+    pub fn serialize(&self) -> Vec<u8> {
         use RESPType::*;
         match self {
-            SimpleString(s) => format!("+{}\r\n", s),
-            SimpleError(err) => format!("-{}\r\n", err),
-            Integer(num) => format!(":{}\r\n", num),
-            BulkString(s) => format!("${}\r\n{}\r\n", s.len(), s),
+            SimpleString(s) => format!("+{}\r\n", s).as_bytes().to_vec(),
+            SimpleError(err) => format!("-{}\r\n", err).as_bytes().to_vec(),
+            Integer(num) => format!(":{}\r\n", num).as_bytes().to_vec(),
+            BulkString(s) => format!("${}\r\n{}\r\n", s.len(), s).as_bytes().to_vec(),
             Array(values) => {
-                let mut ret = format!("*{}\r\n", values.len());
+                let mut ret: Vec<u8> = format!("*{}\r\n", values.len()).as_bytes().to_vec();
                 for value in values {
-                    ret = format!("{}{}", ret, value.serialize());
+                    ret.extend_from_slice(&value.serialize());
                 }
                 ret
             }
-            WildCard(s) => s.to_string(),
-            Null => format!("$-1\r\n"),
+            WildCard(s) => s.to_vec(),
+            Null => format!("$-1\r\n").as_bytes().to_vec(),
         }
     }
 }

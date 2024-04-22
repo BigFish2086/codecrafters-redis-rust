@@ -43,7 +43,7 @@ async fn handle_client(stream: TcpStream, redis: Arc<Mutex<Redis>>) -> anyhow::R
         let cmd = Cmd::from_resp(parsed)?;
         let resp = redis.lock().await.apply_cmd(cmd);
         if ready.is_writable() {
-            match stream.try_write(resp.serialize().as_bytes()) {
+            match stream.try_write(&resp.serialize()) {
                 Ok(_n) => (),
                 Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
                 Err(e) => return Err(e.into()),
@@ -93,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
             stream
                 .lock()
                 .await
-                .write_all(&resp_array_of_bulks!("PING").serialize().as_bytes())
+                .write_all(&resp_array_of_bulks!("PING").serialize())
                 .await
                 .context("slave PING can't reach its master")?;
             validate_response(
@@ -108,7 +108,6 @@ async fn main() -> anyhow::Result<()> {
                 .write_all(
                     &resp_array_of_bulks!("REPLCONF", "listening-port", cfg.service_port)
                         .serialize()
-                        .as_bytes(),
                 )
                 .await
                 .context("slave REPLCONF can't reach its master")?;
@@ -124,7 +123,6 @@ async fn main() -> anyhow::Result<()> {
                 .write_all(
                     &resp_array_of_bulks!("REPLCONF", "capa", "eof", "capa", "psync2")
                         .serialize()
-                        .as_bytes(),
                 )
                 .await
                 .context("slave REPLCONF can't reach its master")?;
@@ -141,7 +139,6 @@ async fn main() -> anyhow::Result<()> {
                 .write_all(
                     &resp_array_of_bulks!("PSYNC", "?", "-1")
                         .serialize()
-                        .as_bytes(),
                 )
                 .await
                 .context("slave PSYNC can't reach its master")?;
