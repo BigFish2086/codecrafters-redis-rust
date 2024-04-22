@@ -2,8 +2,7 @@ use anyhow::Context;
 use std::fmt::{self, Error, Formatter};
 use std::{env, net::Ipv4Addr};
 use crate::utils::random_string;
-
-const DEFAULT_PORT: u16 = 6379;
+use crate::constants::DEFAULT_PORT;
 
 #[derive(Debug)]
 pub enum Role {

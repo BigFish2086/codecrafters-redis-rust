@@ -1,9 +1,7 @@
-use crate::resp::RESPType;
-
-const CR: u8 = b'\r';
-const LF: u8 = b'\n';
-
 // Visit https://redis.io/docs/reference/protocol-spec to know more about this protocol specs
+
+use crate::resp::RESPType;
+use crate::constants::{CR, LF};
 
 #[derive(Debug, PartialEq, thiserror::Error)]
 pub enum ParseError {

@@ -1,30 +1,10 @@
 // https://rdb.fnordig.de/file_format.html
 
-use crate::redis::DataEntry;
+use crate::redis::{ValueType, DataEntry, RedisDB};
 use std::collections::HashMap;
 use tokio::time::{Duration, Instant};
 use crate::utils::take_upto;
-
-const MAGIC: &str = "REDIS";
-const MAGIC_BYTES: usize = MAGIC.len();
-const VERSION_BYTES: usize = 4;
-const TIME_SECS_BYTES: usize = 4;
-const TIME_MILLIS_BYTES: usize = 8;
-
-macro_rules! rdb_opcode {
-    ( $( ($opcode:expr, $konst:ident);)+) => {
-        $( const $konst: u8 = $opcode; )+
-    }
-}
-
-rdb_opcode! {
-    (0xFF, EOF);
-    (0xFE, SELECTDB);
-    (0xFD, EXPIRETIME);
-    (0xFC, EXPIRETIMEMS);
-    (0xFB, RESIZEDB);
-    (0xFA, AUX);
-}
+use crate::constants::*;
 
 #[derive(Debug, PartialEq, thiserror::Error)]
 pub enum RDBParseError {
@@ -58,11 +38,25 @@ pub enum RDBParsedLen {
 }
 
 #[derive(Debug)]
-pub struct RDBFile {
+pub struct RDBHeader {
     pub magic: String,
-    pub rdb_version: u32,
-    pub aux_settings: HashMap<String, String>,
-    pub db: HashMap<String, DataEntry>,
+    pub rdb_version: u8,
+    pub aux_settings: HashMap<ValueType, ValueType>,
+}
+
+impl RDBHeader {
+    pub fn as_rdb(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&self.magic.as_bytes());
+        out.extend_from_slice(format!("{:04}", &self.rdb_version).as_bytes());
+        out.extend_from_slice(&[SELECTDB, 0x0]);
+        for (key, value) in self.aux_settings.iter() {
+            out.push(AUX);
+            out.extend_from_slice(&key.as_rdb()[..]);
+            out.extend_from_slice(&value.as_rdb()[..]);
+        }
+        out
+    }
 }
 
 type Result<T> = std::result::Result<T, RDBParseError>;
@@ -70,11 +64,11 @@ type Result<T> = std::result::Result<T, RDBParseError>;
 pub struct RDBParser {}
 
 impl RDBParser {
-    pub fn from_rdb(data: &mut &[u8]) -> Result<RDBFile> {
+    pub fn from_rdb(data: &mut &[u8]) -> Result<(RDBHeader, RedisDB)> {
         let magic = Self::parse_magic(data)?;
-        let rdb_version = Self::parse_version(data)?;
-        let mut aux_settings: HashMap<String, String> = HashMap::new();
-        let mut db: HashMap<String, DataEntry> = HashMap::new();
+        let rdb_version = Self::parse_version(data)? as u8;
+        let mut aux_settings: HashMap<ValueType, ValueType> = HashMap::new();
+        let mut db: HashMap<ValueType, DataEntry> = HashMap::new();
         while data.len() > 0 {
             let (opcode, rest) = data.split_first_chunk::<1>().unwrap();
             let opcode = opcode[0];
@@ -99,8 +93,8 @@ impl RDBParser {
                 AUX => {
                     *data = rest;
                     aux_settings.insert(
-                        Self::parse_length_encoded_data(data)?,
-                        Self::parse_length_encoded_data(data)?,
+                        ValueType::IntOrString(Self::parse_length_encoded_data(data)?),
+                        ValueType::IntOrString(Self::parse_length_encoded_data(data)?),
                     );
                 }
                 EXPIRETIME => {
@@ -113,9 +107,9 @@ impl RDBParser {
                     let key = Self::parse_length_encoded_data(data)?;
                     let value = Self::parse_length_encoded_data(data)?;
                     db.insert(
-                        key,
+                        ValueType::new(key),
                         DataEntry {
-                            value,
+                            value: ValueType::new(value),
                             created_at: Instant::now(), // XXX
                             expired_millis: Some(expiry),
                         },
@@ -131,9 +125,9 @@ impl RDBParser {
                     let key = Self::parse_length_encoded_data(data)?;
                     let value = Self::parse_length_encoded_data(data)?;
                     db.insert(
-                        key,
+                        ValueType::new(key),
                         DataEntry {
-                            value,
+                            value: ValueType::new(value),
                             created_at: Instant::now(), // XXX
                             expired_millis: Some(expiry),
                         },
@@ -147,9 +141,9 @@ impl RDBParser {
                     let key = Self::parse_length_encoded_data(data)?;
                     let value = Self::parse_length_encoded_data(data)?;
                     db.insert(
-                        key,
+                        ValueType::new(key),
                         DataEntry {
-                            value,
+                            value: ValueType::new(value),
                             created_at: Instant::now(), // XXX
                             expired_millis: None,
                         },
@@ -157,12 +151,7 @@ impl RDBParser {
                 }
             };
         }
-        Ok(RDBFile {
-            magic,
-            rdb_version,
-            aux_settings,
-            db,
-        })
+        Ok((RDBHeader { magic, rdb_version, aux_settings, }, db))
     }
 
     fn parse_magic(data: &mut &[u8]) -> Result<String> {
@@ -191,12 +180,7 @@ impl RDBParser {
             0 => Ok(IntOrString((len_type & 0b00111111) as i32)),
             1 => {
                 let next_byte = take_upto::<1>(data).ok_or_else(|| RDBParseError::InvalidLen)?[0];
-                Ok(IntOrString(i32::from_le_bytes([
-                    next_byte,
-                    len_type & 0b00111111,
-                    0x00,
-                    0x00,
-                ])))
+                Ok(IntOrString(i16::from_le_bytes([next_byte, len_type & 0b00111111]) as i32))
             }
             2 => {
                 let next_four_bytes =
