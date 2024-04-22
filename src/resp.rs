@@ -7,6 +7,7 @@ pub enum RESPType {
     Integer(i64),
     BulkString(String),
     Array(Vec<RESPType>),
+    WildCard(String),
     Null,
 }
 
@@ -31,6 +32,7 @@ impl RESPType {
                 }
                 ret
             }
+            WildCard(s) => s.to_string(),
             Null => format!("$-1\r\n"),
         }
     }

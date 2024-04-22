@@ -25,67 +25,6 @@ use tokio::{
     sync::Mutex,
 };
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    use std::fs::File;
-    use std::io::{BufReader, Read};
-    use std::io::{BufWriter, Write};
-    let mut args = std::env::args().skip(1);
-    let mut opt = args.next().unwrap();
-    if opt == "--read" {
-        let mut file_path = args.next().unwrap();
-
-        let mut ibytes = vec![];
-        let mut input = BufReader::new(File::open(file_path)?);
-        let read_bytes = input.read_to_end(&mut ibytes)?;
-        let mut ibytes: &[u8] = &ibytes;
-
-        let rdb_file = RDBParser::from_rdb(&mut ibytes)?;
-        println!("{:#?}", rdb_file);
-
-    } else if opt == "--write" {
-        let mut file_path = args.next().unwrap();
-
-        let header = RDBHeader {
-            magic: String::from("REDIS"),
-            rdb_version: 3,
-            aux_settings: HashMap::new(),
-        };
-
-        let cfg = Arc::new(Config {
-            service_port: crate::constants::DEFAULT_PORT,
-            replica_of: ReplicaInfo {
-                role: Role::Master,
-                master_replid: utils::random_string(40),
-                master_repl_offset: 0u64,
-            },
-        });
-
-        let redis = Arc::new(Mutex::new(Redis::with_config(Arc::clone(&cfg))));
-        redis.lock().await.dict.insert(
-            ValueType::new("a".to_string()),
-            DataEntry::new("-500".to_string(), None),
-        );
-        redis.lock().await.dict.insert(
-            ValueType::new("z".to_string()),
-            DataEntry::new(utils::random_string(300), None),
-        );
-        redis.lock().await.dict.insert(
-            ValueType::new("b".to_string()),
-            DataEntry::new(String::from_utf8(vec![b'X'; 200]).unwrap(), None),
-        );
-        let output: Vec<u8> = utils::dump_rdb_file(&header, Arc::clone(&redis)).await;
-        let mut file_path = BufWriter::new(File::create(file_path)?);
-        file_path.write_all(&output[..])?;
-        println!("Complete Write!");
-    }
-    Ok(())
-}
-// let irand = random_string(40);
-// println!("{:?}", irand);
-// let mut ibytes = &hex::decode(input)? as &[u8];
-// println!("{:?}", ibytes);
-
 async fn handle_client(stream: TcpStream, redis: Arc<Mutex<Redis>>) -> anyhow::Result<()> {
     println!("accepted new connection");
     loop {
@@ -114,7 +53,7 @@ async fn handle_client(stream: TcpStream, redis: Arc<Mutex<Redis>>) -> anyhow::R
 }
 
 #[tokio::main]
-async fn main2() -> anyhow::Result<()> {
+async fn main() -> anyhow::Result<()> {
     let cfg = Arc::new(Config::try_from(env::args())?);
 
     let listener = TcpListener::bind(format!("127.0.0.1:{}", cfg.service_port).as_str())

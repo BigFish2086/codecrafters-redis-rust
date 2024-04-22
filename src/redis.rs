@@ -3,6 +3,7 @@ use crate::{
     config::Config,
     constants::{COMPRESS_AT_LENGTH, EXPIRETIMEMS},
     resp::RESPType,
+    rdb::RDBHeader,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -256,10 +257,21 @@ impl Redis {
             }
             Info(section) => BulkString(self.cfg.get_info(section)),
             ReplConf(_) => SimpleString("OK".to_string()),
-            Psync { replid, offset: -1 } if replid == "?".to_string() => SimpleString(format!(
-                "FULLRESYNC {} 0",
-                &self.cfg.replica_of.master_replid
-            )),
+            Psync { replid, offset: -1 } if replid == "?".to_string() => {
+                let rdb_header = RDBHeader {
+                    magic: String::from("REDIS"),
+                    rdb_version: 3,
+                    aux_settings: std::collections::HashMap::new(),
+                };
+                let mut rdb_content = rdb_header.as_rdb();
+                rdb_content.extend_from_slice(&self.as_rdb()[..]);
+                rdb_content.push(crate::constants::EOF);
+
+                let msg_header = format!("+FULLRESYNC {} 0\r\n", &self.cfg.replica_of.master_replid);
+                let msg_body = hex::encode(rdb_content);
+                let msg_body = format!("${}\r\n{}", msg_body.len(), msg_body);
+                WildCard(format!("{}{}", msg_header, msg_body))
+            }
             Psync { .. } => todo!(),
         }
     }
