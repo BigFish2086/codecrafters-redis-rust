@@ -239,9 +239,11 @@ impl Redis {
         match cmd {
             Ping => SimpleString("PONG".to_string()),
             Echo(msg) => BulkString(msg),
-            Set { key, value, px } => {
+            Set { ref key, ref value, px } => {
                 self.dict
-                    .insert(ValueType::new(key), DataEntry::new(value, px));
+                    .insert(ValueType::new(key.clone()), DataEntry::new(value.clone(), px));
+                // TODO: not sure if it's good design to call propagate_cmd here
+                self.propagate_cmd(&cmd);
                 SimpleString("OK".to_string())
             }
             Get(key) => {
