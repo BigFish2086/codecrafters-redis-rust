@@ -130,6 +130,7 @@ async fn act_as_replica(
         .write_all(&resp_array_of_bulks!("PSYNC", "?", "-1").serialize())
         .await
         .context("slave PSYNC can't reach its master")?;
+    // let rdb_file = RDBParser::from_rdb(&mut ibytes)?;
 
     Ok(())
 }

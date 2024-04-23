@@ -289,6 +289,7 @@ impl Redis {
                     }
                     _ => todo!("Replica of Replica Senario is not implemented yet."),
                 }
+                println!("CURRENT ROLE: {:#?}", self.cfg.replica_of.role);
                 SimpleString("OK".to_string())
             }
             Psync { replid, offset: -1 } if replid == "?".to_string() => {
@@ -350,6 +351,7 @@ impl Redis {
                                 Ok(port) => {
                                     let socket = SocketAddr::new(*replica_host, port);
                                     let cmd_resp_clone = Arc::clone(&cmd_resp);
+                                    println!("Prop CMD: {:#?} TO: {:#?}", cmd_resp_clone, socket);
                                     tokio::spawn(async move { prop_cmd(socket, cmd_resp_clone).await });
                                 }
                                 _ => continue,
@@ -358,7 +360,7 @@ impl Redis {
                     }
                 }
             }
-            _ => todo!("Replica of Replica Senario is not implemented yet."),
-        }
+            _ => (),
+        };
     }
 }

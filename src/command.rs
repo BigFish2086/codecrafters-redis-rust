@@ -64,8 +64,8 @@ impl Cmd {
         match self {
             Self::Set { key, value, px } => {
                 match px {
-                    Some(millis) => resp_array_of_bulks!(key, value, "px", millis),
-                    None => resp_array_of_bulks!(key, value),
+                    Some(millis) => resp_array_of_bulks!("SET", key, value, "px", millis),
+                    None => resp_array_of_bulks!("SET", key, value),
                 }
             }
             _ => todo!("Getting RESPType::Array of Cmd is not fully implemented yet"),
@@ -112,7 +112,7 @@ impl Cmd {
     fn replconf_cmd(args: Vec<RESPType>) -> Result<Self, CmdError> {
         let mut replica_config = HashMap::new();
         // TODO: later we can verify each config cmd vs. its args
-        for cmd_arg in args.chunks_exact(2) {
+        for cmd_arg in args[1..].chunks_exact(2) {
             let cmd = Self::unpack_bulk_string(&cmd_arg[0])?;
             let arg = Self::unpack_bulk_string(&cmd_arg[1])?;
             replica_config.entry(cmd).or_insert_with(Vec::new).push(arg);
