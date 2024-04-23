@@ -1,21 +1,43 @@
+use crate::{constants::DEFAULT_PORT, utils::random_string};
 use anyhow::Context;
-use std::fmt::{self, Error, Formatter};
-use std::{env, net::Ipv4Addr};
-use crate::utils::random_string;
-use crate::constants::DEFAULT_PORT;
+use std::{
+    collections::HashMap,
+    env,
+    fmt::{self, Error, Formatter},
+    net::{Ipv4Addr, IpAddr},
+};
 
 #[derive(Debug)]
 pub enum Role {
-    Master,
-    Slave { host: Ipv4Addr, port: u16 },
+    Master {
+        // TODO: for now REPLCONF `capa` command is hard to parse and set for each replica on same
+        // host Ip i.e the assumption here is there's one replica per host Ip. to make things clear
+        // assume having 3 replicas (A, B, C) on same host Ip-X, with different `capa`s, so right
+        // now the slave dict should look like this:
+        // slave: { X: { "listening-port": { P-A, P-B, P-C }, "capa": { C1-A, C2-A, C-B, C-C } } }
+        // which may be not correct if these `capa` affect the communectaions (and they should!)
+        // between master and slaves.
+        slaves: HashMap<IpAddr, HashMap<String, Vec<String>>>,
+    },
+    Slave {
+        master_host: Ipv4Addr,
+        master_port: u16,
+    },
 }
 
 impl fmt::Display for Role {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         match self {
-            Self::Master => write!(f, "role:master"),
-            Self::Slave { host, port } => {
-                write!(f, "role:slave\nmaster_host:{}\nmaster_port:{}", host, port)
+            Self::Master { .. } => write!(f, "role:master"),
+            Self::Slave {
+                master_host,
+                master_port,
+            } => {
+                write!(
+                    f,
+                    "role:slave\nmaster_host:{}\nmaster_port:{}",
+                    master_host, master_port
+                )
             }
         }
     }
@@ -23,6 +45,14 @@ impl fmt::Display for Role {
 
 #[derive(Debug)]
 pub struct ReplicaInfo {
+    // TODO: for now, the assumption is that this server is either Master that has slaves or Slave
+    // that replicate another master. Reconsider this approach after reaseraching the
+    // replica-of-replica topic. In that case there are multiple challenges in this desgin, since
+    // enum is either A or B. Ideas that may help:
+    // - having a linked-list with branches in case if replica-B of replica-A of master-M must
+    // replicate replica-A and not necessarily master-M (what will happen in case replica-A died?)
+    // - if replica-B can replicate master-M directly, but for some reason it entered the network
+    // via replica-A, so this design can get to work with little modifications, I think!
     pub role: Role,
     pub master_replid: String,
     pub master_repl_offset: u64,
@@ -77,7 +107,7 @@ impl TryFrom<env::Args> for Config {
         let mut cfg = Self {
             service_port: DEFAULT_PORT,
             replica_of: ReplicaInfo {
-                role: Role::Master,
+                role: Role::Master { slaves: HashMap::new() },
                 master_replid: random_string(40),
                 master_repl_offset: 0,
             },
@@ -111,8 +141,8 @@ impl TryFrom<env::Args> for Config {
                         .parse::<u16>()
                         .context("expected master_port to be valid u16 i.e in range 0-65535")?;
                     cfg.replica_of.role = Role::Slave {
-                        host: master_host,
-                        port: master_port,
+                        master_host,
+                        master_port,
                     };
                 }
                 _ => panic!("ERROR: unsported argument"),

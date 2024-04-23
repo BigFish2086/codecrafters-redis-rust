@@ -66,16 +66,16 @@ async fn main_test_rdb_read_write() -> anyhow::Result<()> {
             aux_settings: HashMap::new(),
         };
 
-        let cfg = Arc::new(Config {
+        let cfg = Config {
             service_port: crate::constants::DEFAULT_PORT,
             replica_of: ReplicaInfo {
-                role: Role::Master,
+                role: Role::Master { slaves: HashMap::new() },
                 master_replid: random_string(40),
                 master_repl_offset: 0u64,
             },
-        });
+        };
 
-        let redis = Arc::new(Mutex::new(Redis::with_config(Arc::clone(&cfg))));
+        let redis = Arc::new(Mutex::new(Redis::with_config(cfg)));
         redis.lock().await.dict.insert(
             ValueType::new("a".to_string()),
             DataEntry::new("-500".to_string(), None),

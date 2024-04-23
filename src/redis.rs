@@ -1,12 +1,17 @@
 use crate::{
     command::Cmd,
-    config::Config,
+    config::{Config, Role},
     constants::{COMPRESS_AT_LENGTH, EXPIRETIMEMS},
-    resp::RESPType,
     rdb::RDBHeader,
+    resp::RESPType,
 };
 use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
+use tokio::{
+    io::{AsyncWriteExt, Interest},
+    net::{TcpListener, TcpStream},
+};
 
 use tokio::time::{Duration, Instant};
 
@@ -34,12 +39,10 @@ impl ValueType {
             Self::IntOrString(data)
         } else {
             match lzf::compress(&data.as_bytes()) {
-                Ok(compressed_data) => {
-                    Self::CompressedString {
-                        real_data_len: data.len(),
-                        compressed_data,
-                    }
-                }
+                Ok(compressed_data) => Self::CompressedString {
+                    real_data_len: data.len(),
+                    compressed_data,
+                },
                 Err(lzf::LzfError::NoCompressionPossible) => Self::IntOrString(data),
                 _ => unreachable!(),
             }
@@ -218,19 +221,19 @@ pub type RedisDB = HashMap<ValueType, DataEntry>;
 
 #[derive(Debug)]
 pub struct Redis {
-    pub cfg: Arc<Config>,
+    pub cfg: Config,
     pub dict: RedisDB,
 }
 
 impl Redis {
-    pub fn with_config(cfg: Arc<Config>) -> Self {
+    pub fn with_config(cfg: Config) -> Self {
         Self {
             cfg,
             dict: HashMap::default(),
         }
     }
 
-    pub fn apply_cmd(&mut self, cmd: Cmd) -> RESPType {
+    pub fn apply_cmd(&mut self, ip: IpAddr, cmd: Cmd) -> RESPType {
         use Cmd::*;
         use RESPType::*;
         match cmd {
@@ -256,7 +259,36 @@ impl Redis {
                 }
             }
             Info(section) => BulkString(self.cfg.get_info(section)),
-            ReplConf(_) => SimpleString("OK".to_string()),
+            ReplConf(replica_config) => {
+                match self.cfg.replica_of.role {
+                    Role::Master { ref mut slaves } => {
+                        // TODO: for now updating current config will happen if the
+                        // slave-repilca-Ip has been seen before, or if the replica-conf command
+                        // has the listening-port argument, then add that slave-replica-ip to
+                        // config and keep updating since then.
+                        if let Some(prev_cfg) = slaves.get_mut(&ip) {
+                            // here slave-replica-ip has been inserted before
+                            for (cmd, args) in replica_config {
+                                for arg in args {
+                                    prev_cfg
+                                        .entry(cmd.clone())
+                                        .or_insert_with(Vec::new)
+                                        .push(arg);
+                                }
+                            }
+                        } else if let Some(replica_port) =
+                            replica_config.get(&"listening-port".to_string())
+                        {
+                            // here slave-replica-ip is new to this master
+                            slaves.insert(ip, replica_config);
+                        } else {
+                            // skip other situations mentioned in the todo.
+                        }
+                    }
+                    _ => todo!("Replica of Replica Senario is not implemented yet."),
+                }
+                SimpleString("OK".to_string())
+            }
             Psync { replid, offset: -1 } if replid == "?".to_string() => {
                 let rdb_header = RDBHeader {
                     magic: String::from("REDIS"),
@@ -267,7 +299,10 @@ impl Redis {
                 rdb_content.extend_from_slice(&self.as_rdb()[..]);
                 rdb_content.push(crate::constants::EOF);
 
-                let mut msg: Vec<u8> = format!("+FULLRESYNC {} 0\r\n", &self.cfg.replica_of.master_replid).as_bytes().to_vec();
+                let mut msg: Vec<u8> =
+                    format!("+FULLRESYNC {} 0\r\n", &self.cfg.replica_of.master_replid)
+                        .as_bytes()
+                        .to_vec();
                 msg.extend_from_slice(format!("${}\r\n", rdb_content.len()).as_bytes());
                 msg.extend_from_slice(&rdb_content);
                 WildCard(msg)
@@ -282,5 +317,46 @@ impl Redis {
             out.extend_from_slice(&key_value_as_rdb(&key, &value)[..]);
         }
         out
+    }
+
+    pub fn propagate_cmd(&self, cmd: &Cmd) {
+        // TODO: simplifications that can be resolved later:
+        // a. in case of not responding replica, just leave it. keep sending to it
+        // - can remove it from slaves directly, so it can do another full reysnc later
+        // - can buffer commands for it, and test its response multiple times before removing it.
+        // b. no buffering for commands, just propagate received command to all replicas on time
+        // - I think real buffering should be per replica as it would solve the above problem also
+        // c. spawn as many threads as needed per replicas
+        // - can have specified number of threads instead and divide work over them.
+        // - work division can be done using channels or each thread can have pre-specified tasks
+
+        let prop_cmd = |socket: SocketAddr, cmd_resp: Arc<RESPType>| async move {
+            match TcpStream::connect(socket).await {
+                Ok(mut stream) => stream.write_all(&cmd_resp.serialize()).await,
+                _ => return,
+            };
+        };
+
+        let cmd_resp = Arc::new(cmd.to_resp_array_of_bulks());
+
+        match &self.cfg.replica_of.role {
+            Role::Master { slaves } => {
+                for (replica_host, replica_config) in slaves.iter() {
+                    for host_ports in replica_config.get("listening-port") {
+                        for port in host_ports {
+                            match port.parse::<u16>() {
+                                Ok(port) => {
+                                    let socket = SocketAddr::new(*replica_host, port);
+                                    let cmd_resp_clone = Arc::clone(&cmd_resp);
+                                    tokio::spawn(async move { prop_cmd(socket, cmd_resp_clone).await });
+                                }
+                                _ => continue,
+                            }
+                        }
+                    }
+                }
+            }
+            _ => todo!("Replica of Replica Senario is not implemented yet."),
+        }
     }
 }

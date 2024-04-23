@@ -1,4 +1,6 @@
 use crate::resp::RESPType;
+use crate::resp_array_of_bulks;
+use std::collections::HashMap;
 use std::fmt;
 
 #[derive(Debug, PartialEq)]
@@ -12,7 +14,7 @@ pub enum Cmd {
     },
     Get(String),
     Info(Option<String>),
-    ReplConf(Vec<String>),
+    ReplConf(HashMap<String, Vec<String>>),
     Psync {
         replid: String,
         offset: i64,
@@ -58,6 +60,18 @@ impl Cmd {
         }
     }
 
+    pub fn to_resp_array_of_bulks(&self) -> RESPType {
+        match self {
+            Self::Set { key, value, px } => {
+                match px {
+                    Some(millis) => resp_array_of_bulks!(key, value, "px", millis),
+                    None => resp_array_of_bulks!(key, value),
+                }
+            }
+            _ => todo!("Getting RESPType::Array of Cmd is not fully implemented yet"),
+        }
+    }
+
     fn echo_cmd(args: Vec<RESPType>) -> Result<Self, CmdError> {
         let msg = Self::unpack_bulk_string(args.get(1).ok_or_else(|| CmdError::MissingArgs)?)?;
         Ok(Self::Echo(msg.clone()))
@@ -96,12 +110,14 @@ impl Cmd {
     }
 
     fn replconf_cmd(args: Vec<RESPType>) -> Result<Self, CmdError> {
-        let mut repl_configs = Vec::new();
-        for conf in &args {
-            let conf_parsed = Self::unpack_bulk_string(conf)?;
-            repl_configs.push(conf_parsed);
+        let mut replica_config = HashMap::new();
+        // TODO: later we can verify each config cmd vs. its args
+        for cmd_arg in args.chunks_exact(2) {
+            let cmd = Self::unpack_bulk_string(&cmd_arg[0])?;
+            let arg = Self::unpack_bulk_string(&cmd_arg[1])?;
+            replica_config.entry(cmd).or_insert_with(Vec::new).push(arg);
         }
-        Ok(Self::ReplConf(repl_configs))
+        Ok(Self::ReplConf(replica_config))
     }
 
     fn psync_cmd(args: Vec<RESPType>) -> Result<Self, CmdError> {
