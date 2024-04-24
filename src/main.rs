@@ -8,13 +8,15 @@ mod rdb;
 mod redis;
 mod resp;
 mod utils;
+mod data_entry;
 
 use crate::{
     command::Cmd,
     config::{Config, ReplicaInfo, Role},
     parser::Parser,
     rdb::{RDBHeader, RDBParser},
-    redis::{DataEntry, Redis, ValueType},
+    data_entry::{DataEntry, ValueType},
+    redis::Redis,
     resp::RESPType,
 };
 use anyhow::{bail, Context};
@@ -50,6 +52,7 @@ async fn act_as_master(stream: TcpStream, redis: Arc<Mutex<Redis>>) -> anyhow::R
                 Err(e) => return Err(e.into()),
             }
         }
+        redis.lock().await.apply_pending_updates_per_host(&client_ip).await;
     }
 }
 

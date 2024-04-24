@@ -37,7 +37,8 @@ async fn main_test_rdb_read_write() -> anyhow::Result<()> {
         config::{Config, Role, ReplicaInfo},
         parser::Parser,
         rdb::{RDBHeader, RDBParser},
-        redis::{ValueType, DataEntry, Redis},
+        data_entry::{ValueType, DataEntry},
+        redis::Redis,
         resp::RESPType,
     };
     use std::fs::File;
@@ -69,10 +70,11 @@ async fn main_test_rdb_read_write() -> anyhow::Result<()> {
         let cfg = Config {
             service_port: crate::constants::DEFAULT_PORT,
             replica_of: ReplicaInfo {
-                role: Role::Master { slaves: HashMap::new() },
+                role: Role::Master,
                 master_replid: random_string(40),
                 master_repl_offset: 0u64,
             },
+            slaves: HashMap::new(),
         };
 
         let redis = Arc::new(Mutex::new(Redis::with_config(cfg)));

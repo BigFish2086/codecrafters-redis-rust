@@ -1,6 +1,7 @@
 // https://rdb.fnordig.de/file_format.html
 
-use crate::redis::{ValueType, DataEntry, RedisDB};
+use crate::data_entry::{ValueType, DataEntry};
+use crate::redis::RedisDB;
 use std::collections::HashMap;
 use tokio::time::{Duration, Instant};
 use crate::utils::take_upto;

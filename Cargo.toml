@@ -27,3 +27,4 @@ tokio = { version = "1.23.0", features = ["full"] } # async networking
 hex = "0.4.3"                                       # hex encode/decode
 rand = "0.8.5"                                      # random generator
 lzf = "1.0.0"                                       # lzf compress/decompress
+futures = "0.3.30"                                  # asynchronous programming
