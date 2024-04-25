@@ -86,53 +86,53 @@ pub struct SlaveMeta {
     // { 'capa': { C1-A, C2-A, C-B, C-C, ... } }
     // which may be not correct if these `capa` affect the communectaions (and they should!)
     // between master and slaves.
+    // TODO: pending updates per listening-port, since as mentioned there could be multiple
+    // listening-ports per same host-ip. in same scenario then: { P-A: updates that replica (ip,
+    // port) didn't after fullsync as one big blob of bytes, ... } however testcases are not
+    // setuped to handle this. it just want the replicae to receive on the original handshake
+    // connection! I think updates should be sent to (host_ip, listening-port sent by the replia).
     pub metadata: HashMap<String, Vec<String>>,
-    // pending updates per listening-port, since as mentioned there could be multiple
-    // listening-ports per same host-ip. in same scenario then:
-    // { P-A: updates that replica (ip, port) didn't after fullsync as one big blob of bytes, ... }
     // NOTE: sending updates like that should work, since each command is sent as RESPType::Array
     // TODO: can have a limit_failures number to remove the port after that.
-    pub pending_updates: HashMap<u16, (WriteStream, Vec<u8>)>,
-    // stream the replica used to configure itself. I think updates should be sent to (host_ip,
-    // listening-port sent by the replia). However, let's store stream to pass these tescase
+    pub pending_updates: HashMap<SocketAddr, (WriteStream, Vec<u8>)>,
 }
 
 impl SlaveMeta {
     pub fn append_update(&mut self, cmd: &Vec<u8>) {
-        for (_port, (wr, updates)) in self.pending_updates.iter_mut() {
+        for (_socket_addr, (_wr, updates)) in self.pending_updates.iter_mut() {
             updates.extend_from_slice(cmd);
         }
     }
 
     pub async fn apply_pending_updates(&mut self) {
         enum UpdateState {
-            Success(u16),
-            Failed(u16),
+            Success(SocketAddr),
+            Failed(SocketAddr),
         };
-        let updates_clone: HashMap<u16, (WriteStream, Vec<u8>)> = self
+        let updates_clone: HashMap<SocketAddr, (WriteStream, Vec<u8>)> = self
             .pending_updates
             .iter()
-            .filter_map(|(port, (wr, updates))| {
+            .filter_map(|(socket_addr, (wr, updates))| {
                 if !updates.is_empty() {
-                    Some((*port, (wr.clone(), updates.clone())))
+                    Some((*socket_addr, (wr.clone(), updates.clone())))
                 } else {
                     None
                 }
             })
             .collect();
-        let mut fetches = stream::iter(updates_clone.into_iter().map(|(port, (wr, updates))| {
+        let mut fetches = stream::iter(updates_clone.into_iter().map(|(socket_addr, (wr, updates))| {
             async move {
                 loop {
                     if wr.lock().await.writable().await.is_ok() {
                         match wr.lock().await.try_write(&updates) {
                             Ok(_n) => {
                                 println!("[+] Success: Write_ALL({:?})", String::from_utf8_lossy(&updates));
-                                return UpdateState::Success(port);
+                                return UpdateState::Success(socket_addr);
                             },
                             Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
                             Err(e) => {
                                 println!("[+] Failed: Write_ALL({:?}) / {:?}", String::from_utf8_lossy(&updates), e);
-                                return UpdateState::Failed(port);
+                                return UpdateState::Failed(socket_addr);
                             }
                         }
                     }
@@ -142,11 +142,11 @@ impl SlaveMeta {
         .buffer_unordered(8);
         while let Some(result) = fetches.next().await {
             match result {
-                UpdateState::Success(port) => {
-                    println!("[+] Success: Clear(port: {:?})", port);
-                    self.pending_updates.get_mut(&port).unwrap().1.clear();
+                UpdateState::Success(socket_addr) => {
+                    println!("[+] Success: Clear(port: {:?})", socket_addr);
+                    self.pending_updates.get_mut(&socket_addr).unwrap().1.clear();
                 }
-                UpdateState::Failed(port) => {
+                UpdateState::Failed(socket_addr) => {
                     // self.pending_updates.remove(&port);
                 }
             };

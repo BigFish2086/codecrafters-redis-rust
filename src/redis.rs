@@ -32,7 +32,7 @@ impl Redis {
         }
     }
 
-    pub fn apply_cmd(&mut self, ip: IpAddr, wr: WriteStream, cmd: Cmd) -> RESPType {
+    pub fn apply_cmd(&mut self, ip: IpAddr, socket_addr: SocketAddr, wr: WriteStream, cmd: Cmd) -> RESPType {
         use Cmd::*;
         use RESPType::*;
         match cmd {
@@ -73,22 +73,14 @@ impl Redis {
                 });
                 for (cmd, args) in replica_config {
                     for arg in args {
-                        if cmd.as_str() == "listening-port" {
-                            match arg.parse::<u16>() {
-                                Ok(port) => {
-                                    let _ = slave_meta.pending_updates.entry(port).or_insert((wr.clone(), Vec::new()));
-                                }
-                                _ => continue,
-                            }
-                        } else {
-                            slave_meta
-                                .metadata
-                                .entry(cmd.clone())
-                                .or_insert_with(Vec::new)
-                                .push(arg);
-                        }
+                        slave_meta
+                            .metadata
+                            .entry(cmd.clone())
+                            .or_insert_with(Vec::new)
+                            .push(arg);
                     }
                 }
+                let _ = slave_meta.pending_updates.entry(socket_addr).or_insert((wr.clone(), Vec::new()));
                 SimpleString("OK".to_string())
             }
             Psync { replid, offset: -1 } if replid == "?".to_string() => {

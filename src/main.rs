@@ -35,10 +35,11 @@ use tokio::{
 
 async fn act_as_master(mut stream: TcpStream, redis: Arc<Mutex<Redis>>) -> anyhow::Result<()> {
     println!("[+] Got Connection: {:?}", stream.peer_addr()?);
-    let client_ip = stream.peer_addr().map(|socket| socket.ip())?;
+    let client_socket_addr = stream.peer_addr()?;
+    let client_ip = client_socket_addr.ip();
     let (rx, wr) = stream.into_split();
     let wr = Arc::new(Mutex::new(wr));
-    let mut pending_interval = time::interval(time::Duration::from_millis(500));
+    let mut pending_interval = time::interval(time::Duration::from_millis(100));
     loop {
         tokio::select! {
             Ok(master_sent_buffer) = async {
@@ -52,7 +53,7 @@ async fn act_as_master(mut stream: TcpStream, redis: Arc<Mutex<Redis>>) -> anyho
                 let resp = redis
                     .lock()
                     .await
-                    .apply_cmd(client_ip, Arc::clone(&wr), cmd);
+                    .apply_cmd(client_ip, client_socket_addr, Arc::clone(&wr), cmd);
             }
             Ok(_) = rx.readable() => {
                 let wr = Arc::clone(&wr);
@@ -69,7 +70,7 @@ async fn act_as_master(mut stream: TcpStream, redis: Arc<Mutex<Redis>>) -> anyho
                 let resp = redis
                     .lock()
                     .await
-                    .apply_cmd(client_ip, Arc::clone(&wr), cmd);
+                    .apply_cmd(client_ip, client_socket_addr, Arc::clone(&wr), cmd);
                 if wr.lock().await.writable().await.is_ok() {
                     match wr.lock().await.try_write(&resp.serialize()) {
                         Ok(_n) => (),
@@ -182,7 +183,7 @@ async fn main() -> anyhow::Result<()> {
 
     if is_replica {
         let redis = Arc::clone(&redis);
-        tokio::spawn(async move { act_as_replica(redis).await });
+        act_as_replica(redis).await?;
     }
 
     loop {
