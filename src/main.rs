@@ -39,7 +39,7 @@ async fn act_as_master(mut stream: TcpStream, redis: Arc<Mutex<Redis>>) -> anyho
     let client_ip = client_socket_addr.ip();
     let (rx, wr) = stream.into_split();
     let wr = Arc::new(Mutex::new(wr));
-    let mut pending_interval = time::interval(time::Duration::from_millis(100));
+    let mut pending_interval = time::interval(time::Duration::from_millis(700));
     loop {
         tokio::select! {
             Ok(master_sent_buffer) = async {
@@ -48,12 +48,19 @@ async fn act_as_master(mut stream: TcpStream, redis: Arc<Mutex<Redis>>) -> anyho
             }
             => {
                 println!("[+] Master Sent Buffer: {:?}", String::from_utf8_lossy(&master_sent_buffer));
-                let (parsed, _rem) = Parser::parse_resp(master_sent_buffer.as_slice())?;
-                let cmd = Cmd::from_resp(parsed)?;
-                let resp = redis
-                    .lock()
-                    .await
-                    .apply_cmd(client_ip, client_socket_addr, Arc::clone(&wr), cmd);
+                let mut input = master_sent_buffer.as_slice();
+                loop {
+                    let (parsed, rem) = Parser::parse_resp(input)?;
+                    let cmd = Cmd::from_resp(parsed)?;
+                    let resp = redis
+                        .lock()
+                        .await
+                        .apply_cmd(client_ip, client_socket_addr, Arc::clone(&wr), cmd);
+                    if rem.is_empty() {
+                        break;
+                    }
+                    input = rem;
+                };
             }
             Ok(_) = rx.readable() => {
                 let wr = Arc::clone(&wr);
@@ -65,19 +72,26 @@ async fn act_as_master(mut stream: TcpStream, redis: Arc<Mutex<Redis>>) -> anyho
                     Err(e) => return Err(e.into()),
                 };
                 println!("[+] Got {:?}", String::from_utf8_lossy(&buffer[..n]));
-                let (parsed, _rem) = Parser::parse_resp(&buffer[..n])?;
-                let cmd = Cmd::from_resp(parsed)?;
-                let resp = redis
-                    .lock()
-                    .await
-                    .apply_cmd(client_ip, client_socket_addr, Arc::clone(&wr), cmd);
-                if wr.lock().await.writable().await.is_ok() {
-                    match wr.lock().await.try_write(&resp.serialize()) {
-                        Ok(_n) => (),
-                        Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
-                        Err(e) => return Err(e.into()),
+                let mut input = &buffer[..n];
+                loop {
+                    let (parsed, rem) = Parser::parse_resp(&buffer[..n])?;
+                    let cmd = Cmd::from_resp(parsed)?;
+                    let resp = redis
+                        .lock()
+                        .await
+                        .apply_cmd(client_ip, client_socket_addr, Arc::clone(&wr), cmd);
+                    if wr.lock().await.writable().await.is_ok() {
+                        match wr.lock().await.try_write(&resp.serialize()) {
+                            Ok(_n) => (),
+                            Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
+                            Err(e) => return Err(e.into()),
+                        }
                     }
-                }
+                    if rem.is_empty() {
+                        break;
+                    }
+                    input = rem;
+                };
             }
             _ = pending_interval.tick() => {
                 redis.lock().await.apply_pending_updates_per_host(&client_ip).await;
