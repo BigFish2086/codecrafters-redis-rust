@@ -1,6 +1,6 @@
 use crate::{
     command::Cmd,
-    config::{Config, Role, SlaveMeta},
+    config::{Config, Role, SlaveMeta, WriteStream},
     constants::{COMPRESS_AT_LENGTH, EXPIRETIMEMS},
     rdb::RDBHeader,
     resp::RESPType,
@@ -32,7 +32,7 @@ impl Redis {
         }
     }
 
-    pub fn apply_cmd(&mut self, ip: IpAddr, cmd: Cmd) -> RESPType {
+    pub fn apply_cmd(&mut self, ip: IpAddr, wr: WriteStream, cmd: Cmd) -> RESPType {
         use Cmd::*;
         use RESPType::*;
         match cmd {
@@ -76,7 +76,7 @@ impl Redis {
                         if cmd.as_str() == "listening-port" {
                             match arg.parse::<u16>() {
                                 Ok(port) => {
-                                    let _ = slave_meta.pending_updates.entry(port).or_insert_with(Vec::new);
+                                    let _ = slave_meta.pending_updates.entry(port).or_insert((wr.clone(), Vec::new()));
                                 }
                                 _ => continue,
                             }
@@ -128,6 +128,7 @@ impl Redis {
     }
 
     pub async fn apply_pending_updates_per_host(&mut self, host_ip: &IpAddr) {
+        println!("[+] Redis: Apply Pending Update Per Host");
         match self.cfg.slaves.get_mut(host_ip) {
             Some(ref mut slave_meta) => {
                 slave_meta.apply_pending_updates().await;
@@ -137,6 +138,7 @@ impl Redis {
     }
 
     pub async fn apply_pending_updates(&mut self) {
+        println!("[+] Redis: Apply ALL Pending Update");
         for (_host_ip, slave_meta) in self.cfg.slaves.iter_mut() {
             slave_meta.apply_pending_updates().await;
         }

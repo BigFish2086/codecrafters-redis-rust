@@ -6,16 +6,27 @@ use std::{
     env,
     fmt::{self, Error, Formatter},
     net::{IpAddr, Ipv4Addr, SocketAddr},
+    sync::Arc,
 };
-use tokio::{io::AsyncWriteExt, net::TcpStream};
+use tokio::{
+    io::AsyncWriteExt,
+    net::{TcpStream, tcp::OwnedWriteHalf},
+    sync::Mutex
+};
 
-#[derive(Debug)]
 pub enum Role {
     Master,
     Slave {
         master_host: Ipv4Addr,
         master_port: u16,
+        master_connection: Option<Arc<Mutex<TcpStream>>>,
     },
+}
+
+impl fmt::Debug for Role {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        write!(f, "{}", self)
+    }
 }
 
 impl fmt::Display for Role {
@@ -25,6 +36,7 @@ impl fmt::Display for Role {
             Self::Slave {
                 master_host,
                 master_port,
+                ..
             } => {
                 write!(
                     f,
@@ -63,6 +75,8 @@ impl fmt::Display for ReplicaInfo {
     }
 }
 
+pub type WriteStream = Arc<Mutex<OwnedWriteHalf>>;
+
 #[derive(Debug)]
 pub struct SlaveMeta {
     pub host_ip: IpAddr,
@@ -78,20 +92,14 @@ pub struct SlaveMeta {
     // { P-A: updates that replica (ip, port) didn't after fullsync as one big blob of bytes, ... }
     // NOTE: sending updates like that should work, since each command is sent as RESPType::Array
     // TODO: can have a limit_failures number to remove the port after that.
-    pub pending_updates: HashMap<u16, Vec<u8>>,
+    pub pending_updates: HashMap<u16, (WriteStream, Vec<u8>)>,
+    // stream the replica used to configure itself. I think updates should be sent to (host_ip,
+    // listening-port sent by the replia). However, let's store stream to pass these tescase
 }
 
 impl SlaveMeta {
-    pub fn new(host_ip: IpAddr) -> Self {
-        Self {
-            host_ip,
-            metadata: HashMap::new(),
-            pending_updates: HashMap::new(),
-        }
-    }
-
     pub fn append_update(&mut self, cmd: &Vec<u8>) {
-        for (_port, updates) in self.pending_updates.iter_mut() {
+        for (_port, (wr, updates)) in self.pending_updates.iter_mut() {
             updates.extend_from_slice(cmd);
         }
     }
@@ -101,30 +109,33 @@ impl SlaveMeta {
             Success(u16),
             Failed(u16),
         };
-        let updates_clone: HashMap<u16, Vec<u8>> = self
+        let updates_clone: HashMap<u16, (WriteStream, Vec<u8>)> = self
             .pending_updates
             .iter()
-            .filter_map(|(port, updates)| {
+            .filter_map(|(port, (wr, updates))| {
                 if !updates.is_empty() {
-                    Some((*port, updates.clone()))
+                    Some((*port, (wr.clone(), updates.clone())))
                 } else {
                     None
                 }
             })
             .collect();
-        let mut fetches = stream::iter(updates_clone.into_iter().map(|(port, updates)| {
-            let host_ip = self.host_ip;
+        let mut fetches = stream::iter(updates_clone.into_iter().map(|(port, (wr, updates))| {
             async move {
-                let socket_addr = SocketAddr::new(host_ip, port);
-                match TcpStream::connect(socket_addr).await {
-                    Ok(mut stream) => {
-                        if let Err(_) = stream.write_all(&updates).await {
-                            UpdateState::Failed(port)
-                        } else {
-                            UpdateState::Success(port)
+                loop {
+                    if wr.lock().await.writable().await.is_ok() {
+                        match wr.lock().await.try_write(&updates) {
+                            Ok(_n) => {
+                                println!("[+] Success: Write_ALL({:?})", String::from_utf8_lossy(&updates));
+                                return UpdateState::Success(port);
+                            },
+                            Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
+                            Err(e) => {
+                                println!("[+] Failed: Write_ALL({:?}) / {:?}", String::from_utf8_lossy(&updates), e);
+                                return UpdateState::Failed(port);
+                            }
                         }
                     }
-                    Err(_) => UpdateState::Failed(port),
                 }
             }
         }))
@@ -132,13 +143,15 @@ impl SlaveMeta {
         while let Some(result) = fetches.next().await {
             match result {
                 UpdateState::Success(port) => {
-                    self.pending_updates.get_mut(&port).unwrap().clear();
+                    println!("[+] Success: Clear(port: {:?})", port);
+                    self.pending_updates.get_mut(&port).unwrap().1.clear();
                 }
                 UpdateState::Failed(port) => {
-                    self.pending_updates.remove(&port);
+                    // self.pending_updates.remove(&port);
                 }
             };
         }
+        println!("[+] Slave Meta Apply Pending Updates DONE");
     }
 }
 
@@ -163,6 +176,26 @@ impl Config {
 
     pub fn replica_info(&self) -> String {
         self.replica_of.to_string()
+    }
+
+    pub async fn read_slave_master_connection(&mut self) -> Result<Vec<u8>, ()> {
+        match self.replica_of.role {
+            Role::Slave { ref mut master_connection, .. } if master_connection.is_some() => {
+                println!("[+] Checking Master Connection as Slave...");
+                let mut buffer = vec![0; 1024];
+                let master_connection_clone = master_connection.clone().unwrap();
+                let n = loop {
+                    match master_connection_clone.lock().await.try_read(&mut buffer) {
+                        Ok(0) => return Err(()),
+                        Ok(n) => break n,
+                        Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
+                        Err(e) => return Err(()),
+                    };
+                };
+                return Ok(buffer[..n].to_vec());
+            }
+            _ => Err(()),
+        }
     }
 }
 
@@ -217,6 +250,7 @@ impl TryFrom<env::Args> for Config {
                     cfg.replica_of.role = Role::Slave {
                         master_host,
                         master_port,
+                        master_connection: None,
                     };
                 }
                 _ => panic!("ERROR: unsported argument"),
