@@ -42,7 +42,7 @@ async fn act_as_master(mut stream: TcpStream, redis: Arc<Mutex<Redis>>) -> anyho
     let mut pending_interval = time::interval(time::Duration::from_millis(700));
     loop {
         tokio::select! {
-            Ok(master_sent_buffer) = async {
+            Ok((master_sent_buffer, master_connection)) = async {
                 let mut redis_guard = redis.lock().await;
                 redis_guard.cfg.read_slave_master_connection().await
             }
@@ -51,18 +51,19 @@ async fn act_as_master(mut stream: TcpStream, redis: Arc<Mutex<Redis>>) -> anyho
                 let mut input = master_sent_buffer.as_slice();
                 loop {
                     let (parsed, rem) = Parser::parse_resp(input)?;
-                    let cmd = Cmd::from_resp(parsed)?;
-                    let replica_need_to_respond = matches!(cmd, Cmd::GetAck);
-                    let resp = redis
-                        .lock()
-                        .await
-                        .apply_cmd(client_ip, client_socket_addr, Arc::clone(&wr), cmd);
-                    if replica_need_to_respond {
-                        if wr.lock().await.writable().await.is_ok() {
-                            match wr.lock().await.try_write(&resp.serialize()) {
-                                Ok(_n) => (),
-                                Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
-                                Err(e) => return Err(e.into()),
+                    if let Ok(cmd) = Cmd::from_resp(parsed) {
+                        let replica_need_to_respond = matches!(cmd, Cmd::GetAck);
+                        let resp = redis
+                            .lock()
+                            .await
+                            .apply_cmd(client_ip, client_socket_addr, Arc::clone(&wr), cmd);
+                        if replica_need_to_respond {
+                            if master_connection.lock().await.writable().await.is_ok() {
+                                match master_connection.lock().await.try_write(&resp.serialize()) {
+                                    Ok(_n) => (),
+                                    Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
+                                    Err(e) => return Err(e.into()),
+                                }
                             }
                         }
                     }

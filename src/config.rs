@@ -147,7 +147,7 @@ impl SlaveMeta {
                     self.pending_updates.get_mut(&socket_addr).unwrap().1.clear();
                 }
                 UpdateState::Failed(socket_addr) => {
-                    // self.pending_updates.remove(&port);
+                    self.pending_updates.remove(&socket_addr);
                 }
             };
         }
@@ -178,7 +178,7 @@ impl Config {
         self.replica_of.to_string()
     }
 
-    pub async fn read_slave_master_connection(&mut self) -> Result<Vec<u8>, ()> {
+    pub async fn read_slave_master_connection(&mut self) -> Result<(Vec<u8>, Arc<Mutex<TcpStream>>), ()> {
         match self.replica_of.role {
             Role::Slave { ref mut master_connection, .. } if master_connection.is_some() => {
                 println!("[+] Checking Master Connection as Slave...");
@@ -193,7 +193,7 @@ impl Config {
                         Err(e) => return Err(()),
                     };
                 };
-                return Ok(buffer[..n].to_vec());
+                return Ok((buffer[..n].to_vec(), master_connection_clone));
             }
             _ => Err(()),
         }
