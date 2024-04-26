@@ -19,6 +19,7 @@ pub enum Cmd {
         replid: String,
         offset: i64,
     },
+    GetAck,
 }
 
 impl fmt::Display for Cmd {
@@ -51,7 +52,14 @@ impl Cmd {
                 "set" => Self::set_cmd(array),
                 "get" => Self::get_cmd(array),
                 "info" => Self::info_cmd(array),
-                "replconf" => Self::replconf_cmd(array),
+                "replconf" => {
+                    let arg = Self::unpack_bulk_string(array.get(1).ok_or_else(|| CmdError::NoCmdsProvided)?)?;
+                    if arg.to_lowercase().as_str() == "getack" {
+                        Ok(Self::GetAck)
+                    } else {
+                        Self::replconf_cmd(array)
+                    }
+                }
                 "psync" => Self::psync_cmd(array),
                 _ => Err(CmdError::NotImplementedCmd),
             }

@@ -184,6 +184,7 @@ impl Config {
                 println!("[+] Checking Master Connection as Slave...");
                 let mut buffer = vec![0; 1024];
                 let master_connection_clone = master_connection.clone().unwrap();
+                master_connection_clone.lock().await.readable().await;
                 let n = loop {
                     match master_connection_clone.lock().await.try_read(&mut buffer) {
                         Ok(0) => return Err(()),

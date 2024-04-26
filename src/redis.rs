@@ -6,6 +6,7 @@ use crate::{
     resp::RESPType,
     data_entry::{DataEntry, ValueType, key_value_as_rdb},
 };
+use crate::resp_array_of_bulks;
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -47,7 +48,7 @@ impl Redis {
                     ValueType::new(key.clone()),
                     DataEntry::new(value.clone(), px),
                 );
-                self.add_pending_update(&cmd);
+                self.add_pending_update_cmd(&cmd);
                 SimpleString("OK".to_string())
             }
             Get(key) => {
@@ -65,6 +66,10 @@ impl Redis {
                 }
             }
             Info(section) => BulkString(self.cfg.get_info(section)),
+            GetAck => {
+                self.add_pending_update_resp(&resp_array_of_bulks!("REPLCONF", "GETACK", "*"));
+                resp_array_of_bulks!("REPLCONF", "ACK", 0)
+            }
             ReplConf(replica_config) => {
                 let slave_meta = self.cfg.slaves.entry(ip).or_insert(SlaveMeta {
                     host_ip: ip,
@@ -113,7 +118,13 @@ impl Redis {
         out
     }
 
-    pub fn add_pending_update(&mut self, cmd: &Cmd) {
+    pub fn add_pending_update_resp(&mut self, resp: &RESPType) {
+        for (_host_ip, slave_meta) in self.cfg.slaves.iter_mut() {
+            slave_meta.append_update(&resp.serialize());
+        }
+    }
+
+    pub fn add_pending_update_cmd(&mut self, cmd: &Cmd) {
         for (_host_ip, slave_meta) in self.cfg.slaves.iter_mut() {
             slave_meta.append_update(&cmd.to_resp_array_of_bulks().serialize());
         }
