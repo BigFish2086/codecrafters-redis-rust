@@ -33,7 +33,7 @@ impl Redis {
         }
     }
 
-    pub fn apply_cmd(&mut self, ip: IpAddr, socket_addr: SocketAddr, wr: WriteStream, cmd: Cmd) -> RESPType {
+    pub fn apply_cmd(&mut self, ip: IpAddr, socket_addr: SocketAddr, wr: Option<WriteStream>, cmd: Cmd) -> RESPType {
         use Cmd::*;
         use RESPType::*;
         match cmd {
@@ -71,7 +71,7 @@ impl Redis {
                 resp_array_of_bulks!("REPLCONF", "ACK", 0)
             }
             ReplConf(replica_config) => {
-                let slave_meta = self.cfg.slaves.entry(ip).or_insert(SlaveMeta {
+                let mut slave_meta = self.cfg.slaves.entry(ip).or_insert(SlaveMeta {
                     host_ip: ip,
                     metadata: HashMap::new(),
                     pending_updates: HashMap::new(),
@@ -85,7 +85,14 @@ impl Redis {
                             .push(arg);
                     }
                 }
-                let _ = slave_meta.pending_updates.entry(socket_addr).or_insert((wr.clone(), Vec::new()));
+                match wr {
+                    Some(wr) => {
+                        let _ = slave_meta.pending_updates.entry(socket_addr).or_insert((wr.clone(), Vec::new()));
+                    }
+                    _ => {
+                        self.cfg.slaves.remove(&ip);
+                    }
+                };
                 SimpleString("OK".to_string())
             }
             Psync { replid, offset: -1 } if replid == "?".to_string() => {
@@ -140,7 +147,7 @@ impl Redis {
         }
     }
 
-    pub async fn apply_pending_updates(&mut self) {
+    pub async fn apply_all_pending_updates(&mut self) {
         println!("[+] Redis: Apply ALL Pending Update");
         for (_host_ip, slave_meta) in self.cfg.slaves.iter_mut() {
             slave_meta.apply_pending_updates().await;

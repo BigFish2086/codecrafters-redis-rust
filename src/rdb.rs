@@ -9,6 +9,8 @@ use crate::constants::*;
 
 #[derive(Debug, PartialEq, thiserror::Error)]
 pub enum RDBParseError {
+    #[error("ERROR: invalid RDB file length")]
+    InvalidFileLength,
     #[error("ERROR: invalid magic bytes, should be `REDIS`")]
     InvalidMagicBytes,
     #[error("ERROR: invalid version number, should be of type `u32`")]
@@ -66,16 +68,28 @@ pub struct RDBParser {}
 
 impl RDBParser {
     pub fn from_rdb(data: &mut &[u8]) -> Result<(RDBHeader, RedisDB)> {
+        let file_length = Self::parse_rdb_file_length(data)?;
+        let data_len_should_remain = data.len() - file_length;
+        println!("[+] Data Len Start: {:?} /  Parsed RDB file length: {:?} / Should rem: {:?}", data.len(), file_length, data_len_should_remain);
+
         let magic = Self::parse_magic(data)?;
         let rdb_version = Self::parse_version(data)? as u8;
+
         let mut aux_settings: HashMap<ValueType, ValueType> = HashMap::new();
         let mut db: HashMap<ValueType, DataEntry> = HashMap::new();
-        while data.len() > 0 {
+
+        while data.len() >= data_len_should_remain {
             let (opcode, rest) = data.split_first_chunk::<1>().unwrap();
             let opcode = opcode[0];
             match opcode {
                 EOF => {
                     *data = rest;
+                    // TODO: parse checksum more robustly, for now let's escap it
+                    println!("[+] @EOF: {:?}", data.len());
+                    let checksum_len = data.len() - data_len_should_remain;
+                    println!("[+] Current checksum: {:?}", String::from_utf8_lossy(&data[..checksum_len]));
+                    *data = &data[checksum_len ..];
+                    println!("[+] Rem Data: {:?}", String::from_utf8_lossy(&data));
                     break;
                 }
                 SELECTDB => {
@@ -155,11 +169,38 @@ impl RDBParser {
         Ok((RDBHeader { magic, rdb_version, aux_settings, }, db))
     }
 
+    fn parse_rdb_file_length(data: &mut &[u8]) -> Result<usize> {
+        use RDBParseError::InvalidFileLength as err;
+        let mark_str = String::from_utf8_lossy(take_upto::<1>(data).ok_or_else(|| err)?);
+        if !mark_str.eq("$") {
+            return Err(err);
+        }
+        if data.len() == 0 {
+            return Err(err);
+        }
+        for i in 0..data.len() - 1 {
+            if data[i] == 0 {
+                return Err(err);
+            }
+            if data[i] == CR && data[i + 1] == LF {
+                return match String::from_utf8_lossy(&data[0..i]).parse::<usize>() {
+                    Ok(number) => {
+                        *data = &data[i + 2 ..];
+                        Ok(number)
+                    }
+                    Err(_) => Err(err),
+                };
+            }
+        }
+        return Err(err);
+    }
+
     fn parse_magic(data: &mut &[u8]) -> Result<String> {
         let magic_bytes =
             take_upto::<MAGIC_BYTES>(data).ok_or_else(|| RDBParseError::InvalidMagicBytes)?;
         let magic_str = String::from_utf8_lossy(magic_bytes);
         if !magic_str.eq(MAGIC) {
+            println!("[+] MAGIC RECEIVED: {:?}", magic_str);
             return Err(RDBParseError::InvalidMagicBytes);
         }
         Ok(magic_str.into_owned())

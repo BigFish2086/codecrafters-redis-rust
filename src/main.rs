@@ -56,7 +56,7 @@ async fn act_as_master(mut stream: TcpStream, redis: Arc<Mutex<Redis>>) -> anyho
                         let resp = redis
                             .lock()
                             .await
-                            .apply_cmd(client_ip, client_socket_addr, Arc::clone(&wr), cmd);
+                            .apply_cmd(client_ip, client_socket_addr, None, cmd);
                         if replica_need_to_respond {
                             if master_connection.lock().await.writable().await.is_ok() {
                                 match master_connection.lock().await.try_write(&resp.serialize()) {
@@ -90,7 +90,7 @@ async fn act_as_master(mut stream: TcpStream, redis: Arc<Mutex<Redis>>) -> anyho
                     let resp = redis
                         .lock()
                         .await
-                        .apply_cmd(client_ip, client_socket_addr, Arc::clone(&wr), cmd);
+                        .apply_cmd(client_ip, client_socket_addr, Some(Arc::clone(&wr)), cmd);
                     if wr.lock().await.writable().await.is_ok() {
                         match wr.lock().await.try_write(&resp.serialize()) {
                             Ok(_n) => (),
@@ -105,7 +105,7 @@ async fn act_as_master(mut stream: TcpStream, redis: Arc<Mutex<Redis>>) -> anyho
                 };
             }
             _ = pending_interval.tick() => {
-                redis.lock().await.apply_pending_updates_per_host(&client_ip).await;
+                redis.lock().await.apply_all_pending_updates().await;
                 println!("[+] Updates Propagated");
             }
         }
@@ -189,9 +189,48 @@ async fn act_as_replica(redis: Arc<Mutex<Redis>>) -> anyhow::Result<()> {
         .write_all(&resp_array_of_bulks!("PSYNC", "?", "-1").serialize())
         .await
         .context("slave PSYNC can't reach its master")?;
-    let _actual = read_response(Arc::clone(&stream)).await?;
-    // let rdb_file = RDBParser::from_rdb(&mut ibytes)?;
 
+    let input = read_response(Arc::clone(&stream)).await?;
+    println!("[+] PSYNC RESULT: {:?}", String::from_utf8_lossy(&input));
+
+    let (fullsync_resp, rem) = Parser::parse_until_crlf(&input)?;
+    println!("[+] FULLSYNC RESULT: {:?}", String::from_utf8_lossy(&fullsync_resp));
+    let mut input = rem;
+
+    if input.is_empty() {
+        // wait until reading rdb
+    }
+    // TODO: it would be better if the parsers for RESP and RDB have similar API
+    // simple and better change, would be if both agree on mutably change `input`
+    let (rdb_header, redis_db) = RDBParser::from_rdb(&mut input)?;
+    println!("[+] RDB Header: {:?}", rdb_header);
+    redis.lock().await.dict = redis_db;
+    println!("[+] RDB DataBase Parsed and written to redis: {:?}", redis.lock().await.dict);
+
+    let client_socket_addr = stream.lock().await.peer_addr()?;
+    let client_ip = client_socket_addr.ip();
+    while !input.is_empty() {
+        let (parsed, rem) = Parser::parse_resp(&input)?;
+        if let Ok(cmd) = Cmd::from_resp(parsed) {
+            let replica_need_to_respond = matches!(cmd, Cmd::GetAck);
+            let resp = redis
+                .lock()
+                .await
+                .apply_cmd(client_ip, client_socket_addr, None, cmd);
+            if replica_need_to_respond {
+                if stream.lock().await.writable().await.is_ok() {
+                    match stream.lock().await.try_write(&resp.serialize()) {
+                        Ok(_n) => (),
+                        Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
+                        Err(e) => return Err(e.into()),
+                    }
+                }
+            }
+        }
+        input = rem;
+    }
+
+    println!("[+] Replica Completed HandShake");
     Ok(())
 }
 
