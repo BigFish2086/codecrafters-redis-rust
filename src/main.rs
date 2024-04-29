@@ -1,3 +1,5 @@
+#![allow(warnings, unused)]
+
 mod command;
 mod config;
 mod constants;
@@ -210,6 +212,7 @@ async fn replica_handle_master_connection(master_connection: Arc<Mutex<TcpStream
     let mut buffer = vec![0; 1024];
     let n = loop {
         match master_connection_guard.try_read(&mut buffer) {
+            Ok(0) => return Ok(()),
             Ok(n) => break n,
             Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
             Err(e) => return Err(e.into()),
@@ -218,6 +221,7 @@ async fn replica_handle_master_connection(master_connection: Arc<Mutex<TcpStream
     let master_sent_buffer = buffer[..n].to_vec();
 
     let mut input = master_sent_buffer.as_slice();
+    println!("[+] Master Sent Buffer: {:?}", String::from_utf8_lossy(&master_sent_buffer));
     loop {
         let input_len_before_parsing = input.len();
         let (parsed, rem) = Parser::parse_resp(input)?;

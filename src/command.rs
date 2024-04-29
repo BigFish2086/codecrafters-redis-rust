@@ -21,8 +21,9 @@ pub enum Cmd {
         offset: i64,
     },
     GetAck,
+    Ack,
     Wait {
-        numreplicas: u64,
+        num_replicas: u64,
         timeout: Duration,
     },
 }
@@ -64,6 +65,8 @@ impl Cmd {
                     )?;
                     if arg.to_lowercase().as_str() == "getack" {
                         Ok(Self::GetAck)
+                    } else if arg.to_lowercase().as_str() == "ack" {
+                        Ok(Self::Ack)
                     } else {
                         Self::replconf_cmd(array)
                     }
@@ -144,9 +147,9 @@ impl Cmd {
     }
 
     fn wait_cmd(args: Vec<RESPType>) -> Result<Self, CmdError> {
-        let numreplicas =
+        let num_replicas =
             Self::unpack_bulk_string(args.get(1).ok_or_else(|| CmdError::MissingArgs)?)?;
-        let numreplicas = numreplicas
+        let num_replicas = num_replicas
             .parse::<u64>()
             .map_err(|_| CmdError::InvalidArg)?;
 
@@ -155,7 +158,7 @@ impl Cmd {
         let timeout = Duration::from_millis(timeout);
 
         Ok(Self::Wait {
-            numreplicas,
+            num_replicas,
             timeout,
         })
     }

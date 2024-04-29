@@ -11,6 +11,8 @@ pub const TIME_MILLIS_BYTES: usize = 8;
 
 pub const COMPRESS_AT_LENGTH: u16 = 150;
 
+pub const SLAVE_LIFETIME_LIMIT: usize = 3;
+
 macro_rules! rdb_opcode {
     ( $( ($opcode:expr, $konst:ident);)+) => {
         $( pub const $konst: u8 = $opcode; )+
