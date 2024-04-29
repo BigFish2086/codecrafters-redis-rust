@@ -1,5 +1,3 @@
-#![allow(warnings, unused)]
-
 mod command;
 mod config;
 mod constants;
@@ -12,28 +10,26 @@ mod utils;
 
 use crate::{
     command::Cmd,
-    config::{Config, ReplicaInfo, Role},
-    data_entry::{DataEntry, ValueType},
+    config::{Config, Role},
     parser::Parser,
-    rdb::{RDBHeader, RDBParser},
+    rdb::RDBParser,
     redis::Redis,
     resp::RESPType,
 };
 use anyhow::{bail, Context};
 use std::{
-    collections::HashMap,
     env,
-    net::{Ipv4Addr, SocketAddr},
+    net::SocketAddr,
     sync::Arc,
 };
 use tokio::{
-    io::{AsyncWriteExt, Interest},
+    io::AsyncWriteExt,
     net::{TcpListener, TcpStream},
     sync::Mutex,
-    time::{self, Duration},
+    time::self,
 };
 
-async fn act_as_master(mut stream: TcpStream, socket_addr: SocketAddr, redis: Arc<Mutex<Redis>>) -> anyhow::Result<()> {
+async fn act_as_master(stream: TcpStream, socket_addr: SocketAddr, redis: Arc<Mutex<Redis>>) -> anyhow::Result<()> {
     println!("[+] Got Connection: {:?}", socket_addr);
     let (rx, wr) = stream.into_split();
     let wr = Arc::new(Mutex::new(wr));
@@ -52,7 +48,7 @@ async fn act_as_master(mut stream: TcpStream, socket_addr: SocketAddr, redis: Ar
                 println!("[+] Got {:?}", String::from_utf8_lossy(&buffer[..n]));
                 let mut input = &buffer[..n];
                 loop {
-                    let (parsed, rem) = Parser::parse_resp(&buffer[..n])?;
+                    let (parsed, rem) = Parser::parse_resp(input)?;
                     let cmd = Cmd::from_resp(parsed)?;
                     let resp = redis
                         .lock()
@@ -176,7 +172,6 @@ async fn act_as_replica(redis: Arc<Mutex<Redis>>) -> anyhow::Result<Arc<Mutex<Tc
     println!("[+] RDB DataBase Parsed and written to redis: {:?}", redis.lock().await.dict);
 
     let client_socket_addr = stream.lock().await.peer_addr()?;
-    let client_ip = client_socket_addr.ip();
     while !input.is_empty() {
         let input_len_before_parsing = input.len();
         let (parsed, rem) = Parser::parse_resp(&input)?;
@@ -210,8 +205,7 @@ async fn act_as_replica(redis: Arc<Mutex<Redis>>) -> anyhow::Result<Arc<Mutex<Tc
 
 async fn replica_handle_master_connection(master_connection: Arc<Mutex<TcpStream>>, redis: Arc<Mutex<Redis>>) -> anyhow::Result<()> {
     let client_socket_addr = master_connection.lock().await.peer_addr()?;
-    let client_ip = client_socket_addr.ip();
-    let mut master_connection_guard = master_connection.lock().await;
+    let master_connection_guard = master_connection.lock().await;
 
     let mut buffer = vec![0; 1024];
     let n = loop {

@@ -1,16 +1,5 @@
 use crate::{
-    config::{Config, Role},
     constants::{COMPRESS_AT_LENGTH, EXPIRETIMEMS},
-    rdb::RDBHeader,
-    resp::RESPType,
-};
-
-use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
-use tokio::{
-    io::{AsyncWriteExt, Interest},
-    net::{TcpListener, TcpStream},
 };
 
 use tokio::time::{Duration, Instant};

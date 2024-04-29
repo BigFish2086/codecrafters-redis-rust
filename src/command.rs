@@ -2,7 +2,7 @@ use crate::resp::RESPType;
 use crate::resp_array_of_bulks;
 use std::collections::HashMap;
 use std::fmt;
-use tokio::time::{Duration, Instant};
+use tokio::time::Duration;
 
 #[derive(Debug, PartialEq)]
 pub enum Cmd {

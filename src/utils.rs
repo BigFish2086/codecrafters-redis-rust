@@ -33,33 +33,29 @@ pub async fn dump_rdb_file(header: &RDBHeader, redis: Arc<Mutex<Redis>>) -> Vec<
 #[allow(dead_code)]
 async fn main_test_rdb_read_write() -> anyhow::Result<()> {
     use crate::{
-        command::Cmd,
         config::{Config, Role, ReplicaInfo},
-        parser::Parser,
-        rdb::{RDBHeader, RDBParser},
+        rdb::RDBParser,
         data_entry::{ValueType, DataEntry},
-        redis::Redis,
-        resp::RESPType,
     };
     use std::fs::File;
     use std::collections::HashMap;
     use std::io::{BufReader, Read, BufWriter, Write};
 
     let mut args = std::env::args().skip(1);
-    let mut opt = args.next().unwrap();
+    let opt = args.next().unwrap();
     if opt == "--read" {
-        let mut file_path = args.next().unwrap();
+        let file_path = args.next().unwrap();
 
         let mut ibytes = vec![];
         let mut input = BufReader::new(File::open(file_path)?);
-        let read_bytes = input.read_to_end(&mut ibytes)?;
+        let _read_bytes = input.read_to_end(&mut ibytes)?;
         let mut ibytes: &[u8] = &ibytes;
 
         let rdb_file = RDBParser::from_rdb(&mut ibytes)?;
         println!("{:#?}", rdb_file);
 
     } else if opt == "--write" {
-        let mut file_path = args.next().unwrap();
+        let file_path = args.next().unwrap();
 
         let header = RDBHeader {
             magic: String::from("REDIS"),

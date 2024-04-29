@@ -1,8 +1,7 @@
 use crate::resp_array_of_bulks;
 use crate::{
     command::Cmd,
-    config::{Config, Role},
-    constants::{COMPRESS_AT_LENGTH, EXPIRETIMEMS},
+    config::Config,
     data_entry::{key_value_as_rdb, DataEntry, ValueType},
     rdb::RDBHeader,
     resp::RESPType,
@@ -10,14 +9,13 @@ use crate::{
 use futures::stream::{self, StreamExt};
 use std::{
     collections::HashMap,
-    net::{IpAddr, SocketAddr},
-    sync::Arc,
+    net::SocketAddr,
+    sync::{Arc, atomic::AtomicUsize},
 };
 use tokio::{
-    io::{AsyncWriteExt, Interest},
-    net::{tcp::OwnedWriteHalf, TcpStream},
     sync::Mutex,
-    time::{Duration, Instant},
+    task::JoinSet,
+    net::tcp::OwnedWriteHalf,
 };
 
 pub type RedisDB = HashMap<ValueType, DataEntry>;
@@ -53,7 +51,7 @@ impl SlaveMeta {
                         break;
                     }
                     Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
-                    Err(e) => break,
+                    Err(_e) => break,
                 }
             }
         }
@@ -234,7 +232,7 @@ impl Redis {
             })
             .collect();
         let mut fetches = stream::iter(slaves_clone.into_iter().map(
-            |(socket_addr, mut slave_meta)| async move {
+            |(_socket_addr, mut slave_meta)| async move {
                 return slave_meta.apply_pending_updates().await;
             },
         ))
