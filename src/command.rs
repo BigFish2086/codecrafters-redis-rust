@@ -20,6 +20,10 @@ pub enum Cmd {
         offset: i64,
     },
     GetAck,
+    Wait {
+        numreplicas: u64,
+        timeout: u64,
+    },
 }
 
 impl fmt::Display for Cmd {
@@ -45,7 +49,8 @@ pub enum CmdError {
 impl Cmd {
     pub fn from_resp(resp: RESPType) -> Result<Self, CmdError> {
         if let RESPType::Array(array) = resp {
-            let cmd_type = Self::unpack_bulk_string(array.get(0).ok_or_else(|| CmdError::NoCmdsProvided)?)?;
+            let cmd_type =
+                Self::unpack_bulk_string(array.get(0).ok_or_else(|| CmdError::NoCmdsProvided)?)?;
             match cmd_type.to_lowercase().as_str() {
                 "ping" => Ok(Self::Ping),
                 "echo" => Self::echo_cmd(array),
@@ -53,7 +58,9 @@ impl Cmd {
                 "get" => Self::get_cmd(array),
                 "info" => Self::info_cmd(array),
                 "replconf" => {
-                    let arg = Self::unpack_bulk_string(array.get(1).ok_or_else(|| CmdError::NoCmdsProvided)?)?;
+                    let arg = Self::unpack_bulk_string(
+                        array.get(1).ok_or_else(|| CmdError::NoCmdsProvided)?,
+                    )?;
                     if arg.to_lowercase().as_str() == "getack" {
                         Ok(Self::GetAck)
                     } else {
@@ -61,6 +68,7 @@ impl Cmd {
                     }
                 }
                 "psync" => Self::psync_cmd(array),
+                "wait" => Self::wait_cmd(array),
                 _ => Err(CmdError::NotImplementedCmd),
             }
         } else {
@@ -70,12 +78,10 @@ impl Cmd {
 
     pub fn to_resp_array_of_bulks(&self) -> RESPType {
         match self {
-            Self::Set { key, value, px } => {
-                match px {
-                    Some(millis) => resp_array_of_bulks!("SET", key, value, "px", millis),
-                    None => resp_array_of_bulks!("SET", key, value),
-                }
-            }
+            Self::Set { key, value, px } => match px {
+                Some(millis) => resp_array_of_bulks!("SET", key, value, "px", millis),
+                None => resp_array_of_bulks!("SET", key, value),
+            },
             _ => todo!("Getting RESPType::Array of Cmd is not fully implemented yet"),
         }
     }
@@ -90,7 +96,8 @@ impl Cmd {
         let value = Self::unpack_bulk_string(args.get(2).ok_or_else(|| CmdError::MissingArgs)?)?;
         let px = match args.get(3) {
             Some(_) => {
-                let px_value = Self::unpack_bulk_string(args.get(4).ok_or_else(|| CmdError::MissingArgs)?)?;
+                let px_value =
+                    Self::unpack_bulk_string(args.get(4).ok_or_else(|| CmdError::MissingArgs)?)?;
                 match px_value.parse::<u64>() {
                     Ok(px_value) => Some(px_value),
                     Err(_) => return Err(CmdError::InvalidArg),
@@ -133,6 +140,22 @@ impl Cmd {
         let offset = Self::unpack_bulk_string(args.get(2).ok_or_else(|| CmdError::MissingArgs)?)?;
         let offset = offset.parse::<i64>().map_err(|_| CmdError::InvalidArg)?;
         Ok(Self::Psync { replid, offset })
+    }
+
+    fn wait_cmd(args: Vec<RESPType>) -> Result<Self, CmdError> {
+        let numreplicas =
+            Self::unpack_bulk_string(args.get(1).ok_or_else(|| CmdError::MissingArgs)?)?;
+        let numreplicas = numreplicas
+            .parse::<u64>()
+            .map_err(|_| CmdError::InvalidArg)?;
+
+        let timeout = Self::unpack_bulk_string(args.get(2).ok_or_else(|| CmdError::MissingArgs)?)?;
+        let timeout = timeout.parse::<u64>().map_err(|_| CmdError::InvalidArg)?;
+
+        Ok(Self::Wait {
+            numreplicas,
+            timeout,
+        })
     }
 
     fn unpack_bulk_string(resp: &RESPType) -> Result<String, CmdError> {

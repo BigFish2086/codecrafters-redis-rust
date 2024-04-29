@@ -72,6 +72,9 @@ impl Redis {
                 self.add_pending_update_resp(&resp_array_of_bulks!("REPLCONF", "GETACK", "*"));
                 resp_array_of_bulks!("REPLCONF", "ACK", self.cfg.replica_of.master_repl_offset)
             }
+            Wait { .. } => {
+               Integer(0)
+            }
             ReplConf(replica_config) => {
                 match wr {
                     Some(wr) => {
