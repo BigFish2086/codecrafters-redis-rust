@@ -2,14 +2,12 @@ use crate::{constants::DEFAULT_PORT, utils::random_string};
 use anyhow::Context;
 use std::{
     env,
+    collections::HashMap,
     fmt::{self, Error, Formatter},
     net::Ipv4Addr,
     sync::Arc,
 };
-use tokio::{
-    net::TcpStream,
-    sync::Mutex
-};
+use tokio::{net::TcpStream, sync::Mutex};
 
 pub enum Role {
     Master,
@@ -76,6 +74,7 @@ impl fmt::Display for ReplicaInfo {
 pub struct Config {
     pub service_port: u16,
     pub replica_of: ReplicaInfo,
+    pub parameters: HashMap<String, String>,
 }
 
 impl Config {
@@ -113,6 +112,7 @@ impl TryFrom<env::Args> for Config {
                 master_replid: random_string(40),
                 master_repl_offset: 0,
             },
+            parameters: HashMap::default(),
         };
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -147,6 +147,22 @@ impl TryFrom<env::Args> for Config {
                         master_port,
                         master_connection: None,
                     };
+                }
+                "--dir" => {
+                    let dir = args
+                        .next()
+                        .context("usage --dir <rdb_directory_path:String>")?
+                        .trim()
+                        .to_owned();
+                    cfg.parameters.insert("dir".to_string(), dir);
+                }
+                "--dbfilename" => {
+                    let db_filename = args
+                        .next()
+                        .context("usage --dbfilename <rdb_filename:String>")?
+                        .trim()
+                        .to_owned();
+                    cfg.parameters.insert("dbfilename".to_string(), db_filename);
                 }
                 _ => panic!("ERROR: unsported argument"),
             };

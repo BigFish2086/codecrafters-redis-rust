@@ -156,6 +156,9 @@ impl Redis {
             Ack => {
                 WildCard("".into())
             }
+            ConfigGet(param) => {
+                resp_array_of_bulks!(param, self.cfg.parameters.get(&param).unwrap_or(&"-1".to_string()))
+            }
             Wait { num_replicas, timeout, } => {
                 let mut lagging = vec![];
                 for (_socket_addr, slave_meta) in self.slaves.iter() {

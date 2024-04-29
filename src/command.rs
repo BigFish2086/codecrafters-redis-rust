@@ -15,13 +15,14 @@ pub enum Cmd {
     },
     Get(String),
     Info(Option<String>),
+    Ack,
+    GetAck,
     ReplConf(HashMap<String, Vec<String>>),
     Psync {
         replid: String,
         offset: i64,
     },
-    GetAck,
-    Ack,
+    ConfigGet(String),
     Wait {
         num_replicas: u64,
         timeout: Duration,
@@ -70,6 +71,18 @@ impl Cmd {
                     } else {
                         Self::replconf_cmd(array)
                     }
+                }
+                "config" => {
+                    let arg = Self::unpack_bulk_string(
+                        array.get(1).ok_or_else(|| CmdError::NoCmdsProvided)?,
+                    )?;
+                    if arg.to_lowercase().as_str() == "get" {
+                        let param = Self::unpack_bulk_string(
+                            array.get(2).ok_or_else(|| CmdError::MissingArgs)?,
+                        )?;
+                        return Ok(Self::ConfigGet(param.trim().to_lowercase()));
+                    }
+                    Err(CmdError::NotImplementedCmd)
                 }
                 "psync" => Self::psync_cmd(array),
                 "wait" => Self::wait_cmd(array),
