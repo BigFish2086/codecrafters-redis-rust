@@ -73,7 +73,11 @@ impl Redis {
                 resp_array_of_bulks!("REPLCONF", "ACK", self.cfg.replica_of.master_repl_offset)
             }
             Wait { .. } => {
-               Integer(0)
+                let mut result = 0;
+                for (_host_ip, slave_meta) in self.cfg.slaves.iter_mut() {
+                    result += slave_meta.pending_updates.len();
+                }
+               Integer(result as i64)
             }
             ReplConf(replica_config) => {
                 match wr {
