@@ -2,6 +2,7 @@ pub const CR: u8 = b'\r';
 pub const LF: u8 = b'\n';
 
 pub const DEFAULT_PORT: u16 = 6379;
+pub const DEFAULT_DB_FILEPATH: &str = "./dump.rdb";
 
 pub const MAGIC: &str = "REDIS";
 pub const MAGIC_BYTES: usize = MAGIC.len();

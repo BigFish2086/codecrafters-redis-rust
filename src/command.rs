@@ -22,11 +22,12 @@ pub enum Cmd {
         replid: String,
         offset: i64,
     },
-    ConfigGet(String),
     Wait {
         num_replicas: u64,
         timeout: Duration,
     },
+    ConfigGet(String),
+    Keys(String),
 }
 
 impl fmt::Display for Cmd {
@@ -62,7 +63,7 @@ impl Cmd {
                 "info" => Self::info_cmd(array),
                 "replconf" => {
                     let arg = Self::unpack_bulk_string(
-                        array.get(1).ok_or_else(|| CmdError::NoCmdsProvided)?,
+                        array.get(1).ok_or_else(|| CmdError::MissingArgs)?,
                     )?;
                     if arg.to_lowercase().as_str() == "getack" {
                         Ok(Self::GetAck)
@@ -74,7 +75,7 @@ impl Cmd {
                 }
                 "config" => {
                     let arg = Self::unpack_bulk_string(
-                        array.get(1).ok_or_else(|| CmdError::NoCmdsProvided)?,
+                        array.get(1).ok_or_else(|| CmdError::MissingArgs)?,
                     )?;
                     if arg.to_lowercase().as_str() == "get" {
                         let param = Self::unpack_bulk_string(
@@ -86,6 +87,12 @@ impl Cmd {
                 }
                 "psync" => Self::psync_cmd(array),
                 "wait" => Self::wait_cmd(array),
+                "keys" => {
+                    let pattern = Self::unpack_bulk_string(
+                        array.get(1).ok_or_else(|| CmdError::MissingArgs)?,
+                    )?;
+                    Ok(Self::Keys(pattern))
+                }
                 _ => Err(CmdError::NotImplementedCmd),
             }
         } else {

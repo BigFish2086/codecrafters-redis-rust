@@ -21,6 +21,9 @@ use crate::{
 use anyhow::{bail, Context};
 use std::{
     env,
+    path::Path,
+    fs::File,
+    io::{BufReader, Read},
     net::SocketAddr,
     sync::Arc,
 };
@@ -163,12 +166,11 @@ async fn act_as_replica(redis: Arc<Mutex<Redis>>) -> anyhow::Result<Arc<Mutex<Tc
     let mut input = rem;
 
     if input.is_empty() {
-        // TODO
-        // wait until reading rdb
+        // TODO wait until reading rdb
     }
     // TODO: it would be better if the parsers for RESP and RDB have similar API
     // simple and better change, would be if both agree on mutably change `input`
-    let (rdb_header, redis_db) = RDBParser::from_rdb(&mut input)?;
+    let (rdb_header, redis_db) = RDBParser::from_rdb_resp(&mut input)?;
     println!("[+] RDB Header: {:?}", rdb_header);
     redis.lock().await.dict = redis_db;
     println!("[+] RDB DataBase Parsed and written to redis: {:?}", redis.lock().await.dict);
@@ -257,12 +259,24 @@ async fn replica_handle_master_connection(master_connection: Arc<Mutex<TcpStream
 async fn main() -> anyhow::Result<()> {
     let cfg = Config::try_from(env::args())?;
 
+    let is_replica = matches!(cfg.replica_of.role, Role::Slave { .. });
+
     let listener = TcpListener::bind(format!("127.0.0.1:{}", cfg.service_port).as_str())
         .await
         .unwrap();
 
-    let is_replica = matches!(cfg.replica_of.role, Role::Slave { .. });
-    let redis = Arc::new(Mutex::new(Redis::with_config(cfg)));
+    let db_filepath = cfg.get_db_filepath();
+    let redis = if db_filepath.exists() {
+        let mut ibytes = vec![];
+        let mut input = BufReader::new(File::open(db_filepath)?);
+        let _read_bytes = input.read_to_end(&mut ibytes)?;
+        let mut ibytes: &[u8] = &ibytes;
+        let (rdb_header, redis_db) = RDBParser::from_rdb_file(&mut ibytes).context("Given Bad RDB File")?;
+        println!("{:?}, {:?}", rdb_header, redis_db);
+        Arc::new(Mutex::new(Redis::new(cfg, redis_db)))
+    } else {
+        Arc::new(Mutex::new(Redis::with_config(cfg)))
+    };
 
     if !is_replica {
         loop {

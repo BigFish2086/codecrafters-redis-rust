@@ -67,8 +67,16 @@ type Result<T> = std::result::Result<T, RDBParseError>;
 pub struct RDBParser {}
 
 impl RDBParser {
-    pub fn from_rdb(data: &mut &[u8]) -> Result<(RDBHeader, RedisDB)> {
+    pub fn from_rdb_file(data: &mut &[u8]) -> Result<(RDBHeader, RedisDB)> {
+        Self::from_rdb(data, data.len())
+    }
+
+    pub fn from_rdb_resp(data: &mut &[u8]) -> Result<(RDBHeader, RedisDB)> {
         let file_length = Self::parse_rdb_file_length(data)?;
+        Self::from_rdb(data, file_length)
+    }
+
+    fn from_rdb(data: &mut &[u8], file_length: usize) -> Result<(RDBHeader, RedisDB)> {
         let data_len_should_remain = data.len() - file_length;
         println!("[+] Data Len Start: {:?} /  Parsed RDB file length: {:?} / Should rem: {:?}", data.len(), file_length, data_len_should_remain);
 

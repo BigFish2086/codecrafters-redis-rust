@@ -1,4 +1,10 @@
-use crate::{constants::DEFAULT_PORT, utils::random_string};
+use crate::{
+    constants::{
+        DEFAULT_PORT,
+        DEFAULT_DB_FILEPATH,
+    },
+    utils::random_string
+};
 use anyhow::Context;
 use std::{
     env,
@@ -6,6 +12,7 @@ use std::{
     fmt::{self, Error, Formatter},
     net::Ipv4Addr,
     sync::Arc,
+    path::PathBuf,
 };
 use tokio::{net::TcpStream, sync::Mutex};
 
@@ -91,6 +98,17 @@ impl Config {
 
     pub fn replica_info(&self) -> String {
         self.replica_of.to_string()
+    }
+
+    pub fn get_db_filepath(&self) -> PathBuf {
+        let binding = String::default();
+        let dir = self.parameters.get("dir").unwrap_or(&binding);
+        let db_filename = self.parameters.get("dbfilename").unwrap_or(&binding);
+        let mut db_filepath: PathBuf = [dir, db_filename].iter().collect();
+        if !db_filepath.exists() {
+            db_filepath = DEFAULT_DB_FILEPATH.to_string().into();
+        }
+        db_filepath
     }
 }
 

@@ -51,7 +51,7 @@ async fn main_test_rdb_read_write() -> anyhow::Result<()> {
         let _read_bytes = input.read_to_end(&mut ibytes)?;
         let mut ibytes: &[u8] = &ibytes;
 
-        let rdb_file = RDBParser::from_rdb(&mut ibytes)?;
+        let rdb_file = RDBParser::from_rdb_file(&mut ibytes)?;
         println!("{:#?}", rdb_file);
 
     } else if opt == "--write" {

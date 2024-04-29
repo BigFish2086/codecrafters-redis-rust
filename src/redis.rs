@@ -103,6 +103,14 @@ pub struct Redis {
 }
 
 impl Redis {
+    pub fn new(cfg: Config, dict: RedisDB) -> Self {
+        Self {
+            cfg,
+            dict,
+            slaves: HashMap::default(),
+        }
+    }
+
     pub fn with_config(cfg: Config) -> Self {
         Self {
             cfg,
@@ -158,6 +166,14 @@ impl Redis {
             }
             ConfigGet(param) => {
                 resp_array_of_bulks!(param, self.cfg.parameters.get(&param).unwrap_or(&"-1".to_string()))
+            }
+            Keys(_pattern) => {
+                // TODO: should match the given pattern instead
+                let mut result = Vec::with_capacity(self.dict.len());
+                for (key, _value) in self.dict.iter() {
+                    result.push(BulkString(key.as_string()));
+                }
+                Array(result)
             }
             Wait { num_replicas, timeout, } => {
                 let mut lagging = vec![];
