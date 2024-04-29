@@ -2,6 +2,7 @@ use crate::{
     constants::{COMPRESS_AT_LENGTH, EXPIRETIMEMS},
 };
 
+use std::time::SystemTime;
 use tokio::time::{Duration, Instant};
 
 #[derive(Debug, Eq, Hash, PartialEq)]
@@ -166,22 +167,21 @@ impl ValueType {
 pub struct DataEntry {
     pub value: ValueType,
     pub created_at: Instant,
-    // TODO: add distinction between expiry millis and expiry secs
-    pub expired_millis: Option<Duration>,
+    pub expired_at_unix_millis: Option<SystemTime>,
 }
 
 impl DataEntry {
     pub fn new(data: String, expired_millis: Option<u64>) -> Self {
         Self {
             value: ValueType::new(data),
-            expired_millis: expired_millis.map(|x| Duration::from_millis(x)),
+            expired_at_unix_millis: expired_millis.map(|ms| SystemTime::now() + Duration::from_millis(ms)),
             created_at: Instant::now(),
         }
     }
 
     pub fn is_expired(&self) -> bool {
-        match self.expired_millis {
-            Some(expiry) => self.created_at.elapsed() > expiry,
+        match self.expired_at_unix_millis {
+            Some(expiry) => SystemTime::now() > expiry,
             None => false,
         }
     }
@@ -193,10 +193,11 @@ pub fn key_value_as_rdb(key: &ValueType, value: &DataEntry) -> Vec<u8> {
     // string_encoded_key
     // encoded_value
     let mut out: Vec<u8> = vec![];
-    match value.expired_millis {
+    // TODO: should write specified Unix time at which the key will expire, in milliseconds
+    match value.expired_at_unix_millis {
         Some(expiry) => {
             out = vec![EXPIRETIMEMS];
-            out.extend_from_slice(&(expiry.as_millis() as u64).to_le_bytes());
+            out.extend_from_slice(&(expiry.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as u64).to_le_bytes());
         }
         None => (),
     };

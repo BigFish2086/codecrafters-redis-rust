@@ -169,6 +169,7 @@ impl Redis {
             }
             Keys(_pattern) => {
                 // TODO: should match the given pattern instead
+                self.dict.retain(|_, v| !v.is_expired());
                 let mut result = Vec::with_capacity(self.dict.len());
                 for (key, _value) in self.dict.iter() {
                     result.push(BulkString(key.as_string()));

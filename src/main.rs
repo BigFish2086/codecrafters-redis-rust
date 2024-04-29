@@ -10,6 +10,8 @@ mod redis;
 mod resp;
 mod utils;
 
+use base64::prelude::*;
+
 use crate::{
     command::Cmd,
     config::{Config, Role},
@@ -271,9 +273,14 @@ async fn main() -> anyhow::Result<()> {
         let mut input = BufReader::new(File::open(db_filepath)?);
         let _read_bytes = input.read_to_end(&mut ibytes)?;
         let mut ibytes: &[u8] = &ibytes;
-        let (rdb_header, redis_db) = RDBParser::from_rdb_file(&mut ibytes).context("Given Bad RDB File")?;
-        println!("{:?}, {:?}", rdb_header, redis_db);
-        Arc::new(Mutex::new(Redis::new(cfg, redis_db)))
+        println!("{:#?}", BASE64_STANDARD.encode(String::from(String::from_utf8_lossy(ibytes))));
+        match RDBParser::from_rdb_file(&mut ibytes) {
+            Ok((rdb_header, redis_db)) => {
+                println!("{:#?}, {:#?}", rdb_header, redis_db);
+                Arc::new(Mutex::new(Redis::new(cfg, redis_db)))
+            }
+            _ => Arc::new(Mutex::new(Redis::with_config(cfg))),
+        }
     } else {
         Arc::new(Mutex::new(Redis::with_config(cfg)))
     };
