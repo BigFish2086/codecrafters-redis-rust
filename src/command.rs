@@ -28,6 +28,7 @@ pub enum Cmd {
     },
     ConfigGet(String),
     Keys(String),
+    Type(String),
 }
 
 impl fmt::Display for Cmd {
@@ -61,6 +62,8 @@ impl Cmd {
                 "set" => Self::set_cmd(array),
                 "get" => Self::get_cmd(array),
                 "info" => Self::info_cmd(array),
+                "psync" => Self::psync_cmd(array),
+                "wait" => Self::wait_cmd(array),
                 "replconf" => {
                     let arg = Self::unpack_bulk_string(
                         array.get(1).ok_or_else(|| CmdError::MissingArgs)?,
@@ -85,13 +88,17 @@ impl Cmd {
                     }
                     Err(CmdError::NotImplementedCmd)
                 }
-                "psync" => Self::psync_cmd(array),
-                "wait" => Self::wait_cmd(array),
                 "keys" => {
                     let pattern = Self::unpack_bulk_string(
                         array.get(1).ok_or_else(|| CmdError::MissingArgs)?,
                     )?;
                     Ok(Self::Keys(pattern))
+                }
+                "type" => {
+                    let key = Self::unpack_bulk_string(
+                        array.get(1).ok_or_else(|| CmdError::MissingArgs)?,
+                    )?;
+                    Ok(Self::Type(key))
                 }
                 _ => Err(CmdError::NotImplementedCmd),
             }

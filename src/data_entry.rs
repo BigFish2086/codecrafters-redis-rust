@@ -57,6 +57,14 @@ impl ValueType {
         }
     }
 
+    pub fn type_as_string(&self) -> String {
+        use ValueType::*;
+        match self {
+            I8Int(_) | I16Int(_) | I32Int(_)  => "integer".to_string(),
+            IntOrString(_) | CompressedString { .. } => "string".to_string(),
+        }
+    }
+
     fn number_to_length_encoded(number: u32) -> Vec<u8> {
         match number {
             0..=63 => {

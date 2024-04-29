@@ -176,6 +176,20 @@ impl Redis {
                 }
                 Array(result)
             }
+            Type(key) => {
+                let key = ValueType::new(key);
+                match self.dict.get(&key) {
+                    Some(data) => {
+                        if data.is_expired() {
+                            self.dict.remove(&key);
+                            SimpleString("none".to_string())
+                        } else {
+                            SimpleString(key.type_as_string())
+                        }
+                    }
+                    None => SimpleString("none".to_string()),
+                }
+            }
             Wait { num_replicas, timeout, } => {
                 let mut lagging = vec![];
                 for (_socket_addr, slave_meta) in self.slaves.iter() {
