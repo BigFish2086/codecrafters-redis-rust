@@ -1,28 +1,102 @@
+use crate::resp_array_of_bulks;
 use crate::{
     command::Cmd,
-    config::{Config, Role, SlaveMeta, WriteStream},
+    config::{Config, Role},
     constants::{COMPRESS_AT_LENGTH, EXPIRETIMEMS},
+    data_entry::{key_value_as_rdb, DataEntry, ValueType},
     rdb::RDBHeader,
     resp::RESPType,
-    data_entry::{DataEntry, ValueType, key_value_as_rdb},
 };
-use crate::resp_array_of_bulks;
-use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr};
-use std::sync::Arc;
+use futures::stream::{self, StreamExt};
+use std::{
+    collections::HashMap,
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+};
 use tokio::{
     io::{AsyncWriteExt, Interest},
-    net::{TcpListener, TcpStream},
+    net::{tcp::OwnedWriteHalf, TcpStream},
+    sync::Mutex,
+    time::{Duration, Instant},
 };
 
-use tokio::time::{Duration, Instant};
-
 pub type RedisDB = HashMap<ValueType, DataEntry>;
+pub type WriteStream = Arc<Mutex<OwnedWriteHalf>>;
+
+enum UpdateState {
+    Success(SocketAddr),
+    Failed(SocketAddr),
+}
+
+#[derive(Debug, Clone)]
+pub struct SlaveMeta {
+    pub expected_offset: usize,
+    pub actual_offset: usize,
+    pub wr: WriteStream,
+    pub socket_addr: SocketAddr,
+    pub pending_updates: Vec<u8>,
+    pub metadata: HashMap<String, Vec<String>>,
+}
+
+impl SlaveMeta {
+    pub fn append_update(&mut self, cmd: &Vec<u8>) {
+        self.pending_updates.extend_from_slice(cmd);
+    }
+
+    pub async fn write_cmd(&mut self, cmd: &Vec<u8>) {
+        let wr_guard = self.wr.lock().await;
+        loop {
+            if wr_guard.writable().await.is_ok() {
+                match wr_guard.try_write(cmd) {
+                    Ok(n) => {
+                        self.actual_offset += n;
+                        break;
+                    }
+                    Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
+                    Err(e) => break,
+                }
+            }
+        }
+        self.expected_offset += cmd.len();
+    }
+
+    pub async fn apply_pending_updates(&mut self) -> UpdateState {
+        if self.pending_updates.is_empty() {
+            return UpdateState::Success(self.socket_addr);
+        }
+        let wr_guard = self.wr.lock().await;
+        self.expected_offset += self.pending_updates.len();
+        loop {
+            if wr_guard.writable().await.is_ok() {
+                match wr_guard.try_write(&self.pending_updates) {
+                    Ok(n) => {
+                        println!(
+                            "[+] Success: Write_ALL({:?})",
+                            String::from_utf8_lossy(&self.pending_updates)
+                        );
+                        self.actual_offset += n;
+                        return UpdateState::Success(self.socket_addr);
+                    }
+                    Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
+                    Err(e) => {
+                        println!(
+                            "[+] Failed: Write_ALL({:?}) / {:?}",
+                            String::from_utf8_lossy(&self.pending_updates),
+                            e
+                        );
+                        return UpdateState::Failed(self.socket_addr);
+                    }
+                }
+            }
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct Redis {
     pub cfg: Config,
     pub dict: RedisDB,
+    pub slaves: HashMap<SocketAddr, SlaveMeta>,
 }
 
 impl Redis {
@@ -30,16 +104,20 @@ impl Redis {
         Self {
             cfg,
             dict: HashMap::default(),
+            slaves: HashMap::default(),
         }
     }
 
-    pub fn apply_cmd(&mut self, ip: IpAddr, socket_addr: SocketAddr, wr: Option<WriteStream>, cmd: Cmd) -> RESPType {
+    pub async fn apply_cmd(
+        &mut self,
+        socket_addr: SocketAddr,
+        wr: Option<WriteStream>,
+        cmd: Cmd,
+    ) -> RESPType {
         use Cmd::*;
         use RESPType::*;
         match cmd {
-            Ping => {
-                SimpleString("PONG".to_string())
-            }
+            Ping => SimpleString("PONG".to_string()),
             Echo(msg) => BulkString(msg),
             Set {
                 ref key,
@@ -73,19 +151,18 @@ impl Redis {
                 resp_array_of_bulks!("REPLCONF", "ACK", self.cfg.replica_of.master_repl_offset)
             }
             Wait { .. } => {
-                let mut result = 0;
-                for (_host_ip, slave_meta) in self.cfg.slaves.iter_mut() {
-                    result += slave_meta.pending_updates.len();
-                }
-               Integer(result as i64)
+                Integer(self.slaves.len() as i64)
             }
             ReplConf(replica_config) => {
                 match wr {
                     Some(wr) => {
-                        let mut slave_meta = self.cfg.slaves.entry(ip).or_insert(SlaveMeta {
-                            host_ip: ip,
+                        let mut slave_meta = self.slaves.entry(socket_addr).or_insert(SlaveMeta {
+                            expected_offset: 0,
+                            actual_offset: 0,
+                            socket_addr,
+                            wr: wr.clone(),
                             metadata: HashMap::new(),
-                            pending_updates: HashMap::new(),
+                            pending_updates: Vec::new(),
                         });
                         for (cmd, args) in replica_config {
                             for arg in args {
@@ -96,7 +173,6 @@ impl Redis {
                                     .push(arg);
                             }
                         }
-                        let _ = slave_meta.pending_updates.entry(socket_addr).or_insert((wr.clone(), Vec::new()));
                     }
                     _ => {}
                 };
@@ -133,29 +209,53 @@ impl Redis {
     }
 
     pub fn add_pending_update_resp(&mut self, resp: &RESPType) {
-        for (_host_ip, slave_meta) in self.cfg.slaves.iter_mut() {
+        for (_socket_addr, slave_meta) in self.slaves.iter_mut() {
             slave_meta.append_update(&resp.serialize());
         }
     }
 
     pub fn add_pending_update_cmd(&mut self, cmd: &Cmd) {
-        for (_host_ip, slave_meta) in self.cfg.slaves.iter_mut() {
+        for (_socket_addr, slave_meta) in self.slaves.iter_mut() {
             slave_meta.append_update(&cmd.to_resp_array_of_bulks().serialize());
         }
     }
 
-    pub async fn apply_pending_updates_per_host(&mut self, host_ip: &IpAddr) {
-        match self.cfg.slaves.get_mut(host_ip) {
-            Some(ref mut slave_meta) => {
-                slave_meta.apply_pending_updates().await;
-            }
-            None => (),
+    pub async fn apply_all_pending_updates(&mut self) -> u64 {
+        let mut updates_done = 0;
+        let slaves_clone: HashMap<SocketAddr, SlaveMeta> = self
+            .slaves
+            .iter()
+            .filter_map(|(socket_addr, slave_meta)| {
+                if !slave_meta.pending_updates.is_empty() {
+                    return Some((*socket_addr, slave_meta.clone()));
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let mut fetches = stream::iter(slaves_clone.into_iter().map(
+            |(socket_addr, mut slave_meta)| async move {
+                return slave_meta.apply_pending_updates().await;
+            },
+        ))
+        .buffer_unordered(8);
+        while let Some(result) = fetches.next().await {
+            match result {
+                UpdateState::Success(socket_addr) => {
+                    println!("[+] Success: Clear(SocketAddr: {:?})", socket_addr);
+                    self.slaves
+                        .get_mut(&socket_addr)
+                        .unwrap()
+                        .pending_updates
+                        .clear();
+                    updates_done += 1;
+                }
+                UpdateState::Failed(socket_addr) => {
+                    println!("[+] Failed: Remove(SocketAddr: {:?})", socket_addr);
+                    self.slaves.remove(&socket_addr);
+                }
+            };
         }
-    }
-
-    pub async fn apply_all_pending_updates(&mut self) {
-        for (_host_ip, slave_meta) in self.cfg.slaves.iter_mut() {
-            slave_meta.apply_pending_updates().await;
-        }
+        return updates_done;
     }
 }

@@ -74,7 +74,6 @@ async fn main_test_rdb_read_write() -> anyhow::Result<()> {
                 master_replid: random_string(40),
                 master_repl_offset: 0u64,
             },
-            slaves: HashMap::new(),
         };
 
         let redis = Arc::new(Mutex::new(Redis::with_config(cfg)));

@@ -1,6 +1,5 @@
 use crate::{constants::DEFAULT_PORT, utils::random_string};
 use anyhow::Context;
-use futures::stream::{self, StreamExt};
 use std::{
     collections::HashMap,
     env,
@@ -75,91 +74,10 @@ impl fmt::Display for ReplicaInfo {
     }
 }
 
-pub type WriteStream = Arc<Mutex<OwnedWriteHalf>>;
-
-#[derive(Debug)]
-pub struct SlaveMeta {
-    pub host_ip: IpAddr,
-    // TODO: for now REPLCONF `capa` command is hard to parse and set for each replica on same host
-    // Ip. to make things clear assume having 3 replicas (A, B, C) on same host Ip-X, with
-    // different capas, right now the metadata should look like this:
-    // { 'capa': { C1-A, C2-A, C-B, C-C, ... } }
-    // which may be not correct if these `capa` affect the communectaions (and they should!)
-    // between master and slaves.
-    // TODO: pending updates per listening-port, since as mentioned there could be multiple
-    // listening-ports per same host-ip. in same scenario then: { P-A: updates that replica (ip,
-    // port) didn't after fullsync as one big blob of bytes, ... } however testcases are not
-    // setuped to handle this. it just want the replicae to receive on the original handshake
-    // connection! I think updates should be sent to (host_ip, listening-port sent by the replia).
-    pub metadata: HashMap<String, Vec<String>>,
-    // NOTE: sending updates like that should work, since each command is sent as RESPType::Array
-    // TODO: can have a limit_failures number to remove the port after that.
-    pub pending_updates: HashMap<SocketAddr, (WriteStream, Vec<u8>)>,
-}
-
-impl SlaveMeta {
-    pub fn append_update(&mut self, cmd: &Vec<u8>) {
-        for (_socket_addr, (_wr, updates)) in self.pending_updates.iter_mut() {
-            updates.extend_from_slice(cmd);
-        }
-    }
-
-    pub async fn apply_pending_updates(&mut self) {
-        enum UpdateState {
-            Success(SocketAddr),
-            Failed(SocketAddr),
-        };
-        let updates_clone: HashMap<SocketAddr, (WriteStream, Vec<u8>)> = self
-            .pending_updates
-            .iter()
-            .filter_map(|(socket_addr, (wr, updates))| {
-                if !updates.is_empty() {
-                    Some((*socket_addr, (wr.clone(), updates.clone())))
-                } else {
-                    None
-                }
-            })
-            .collect();
-        let mut fetches = stream::iter(updates_clone.into_iter().map(|(socket_addr, (wr, updates))| {
-            async move {
-                loop {
-                    if wr.lock().await.writable().await.is_ok() {
-                        match wr.lock().await.try_write(&updates) {
-                            Ok(_n) => {
-                                println!("[+] Success: Write_ALL({:?})", String::from_utf8_lossy(&updates));
-                                return UpdateState::Success(socket_addr);
-                            },
-                            Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
-                            Err(e) => {
-                                println!("[+] Failed: Write_ALL({:?}) / {:?}", String::from_utf8_lossy(&updates), e);
-                                return UpdateState::Failed(socket_addr);
-                            }
-                        }
-                    }
-                }
-            }
-        }))
-        .buffer_unordered(8);
-        while let Some(result) = fetches.next().await {
-            match result {
-                UpdateState::Success(socket_addr) => {
-                    println!("[+] Success: Clear(SocketAddr: {:?})", socket_addr);
-                    self.pending_updates.get_mut(&socket_addr).unwrap().1.clear();
-                }
-                UpdateState::Failed(socket_addr) => {
-                    println!("[+] Failed: Remove(SocketAddr: {:?})", socket_addr);
-                    self.pending_updates.remove(&socket_addr);
-                }
-            };
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct Config {
     pub service_port: u16,
     pub replica_of: ReplicaInfo,
-    pub slaves: HashMap<IpAddr, SlaveMeta>,
 }
 
 impl Config {
@@ -176,26 +94,6 @@ impl Config {
 
     pub fn replica_info(&self) -> String {
         self.replica_of.to_string()
-    }
-
-    pub async fn read_slave_master_connection(&mut self) -> Result<(Vec<u8>, Arc<Mutex<TcpStream>>), ()> {
-        match self.replica_of.role {
-            Role::Slave { ref mut master_connection, .. } if master_connection.is_some() => {
-                let mut buffer = vec![0; 1024];
-                let master_connection_clone = master_connection.clone().unwrap();
-                master_connection_clone.lock().await.readable().await;
-                let n = loop {
-                    match master_connection_clone.lock().await.try_read(&mut buffer) {
-                        Ok(0) => return Err(()),
-                        Ok(n) => break n,
-                        Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
-                        Err(e) => return Err(()),
-                    };
-                };
-                return Ok((buffer[..n].to_vec(), master_connection_clone));
-            }
-            _ => Err(()),
-        }
     }
 }
 
@@ -217,7 +115,6 @@ impl TryFrom<env::Args> for Config {
                 master_replid: random_string(40),
                 master_repl_offset: 0,
             },
-            slaves: HashMap::new(),
         };
         while let Some(arg) = args.next() {
             match arg.as_str() {

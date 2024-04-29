@@ -1,5 +1,5 @@
 use crate::{
-    config::{Config, Role, SlaveMeta},
+    config::{Config, Role},
     constants::{COMPRESS_AT_LENGTH, EXPIRETIMEMS},
     rdb::RDBHeader,
     resp::RESPType,

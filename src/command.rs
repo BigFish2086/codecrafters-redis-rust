@@ -2,6 +2,7 @@ use crate::resp::RESPType;
 use crate::resp_array_of_bulks;
 use std::collections::HashMap;
 use std::fmt;
+use tokio::time::{Duration, Instant};
 
 #[derive(Debug, PartialEq)]
 pub enum Cmd {
@@ -22,7 +23,7 @@ pub enum Cmd {
     GetAck,
     Wait {
         numreplicas: u64,
-        timeout: u64,
+        timeout: Duration,
     },
 }
 
@@ -151,6 +152,7 @@ impl Cmd {
 
         let timeout = Self::unpack_bulk_string(args.get(2).ok_or_else(|| CmdError::MissingArgs)?)?;
         let timeout = timeout.parse::<u64>().map_err(|_| CmdError::InvalidArg)?;
+        let timeout = Duration::from_millis(timeout);
 
         Ok(Self::Wait {
             numreplicas,
