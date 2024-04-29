@@ -200,7 +200,6 @@ impl RDBParser {
             take_upto::<MAGIC_BYTES>(data).ok_or_else(|| RDBParseError::InvalidMagicBytes)?;
         let magic_str = String::from_utf8_lossy(magic_bytes);
         if !magic_str.eq(MAGIC) {
-            println!("[+] MAGIC RECEIVED: {:?}", magic_str);
             return Err(RDBParseError::InvalidMagicBytes);
         }
         Ok(magic_str.into_owned())

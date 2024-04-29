@@ -143,15 +143,15 @@ impl SlaveMeta {
         while let Some(result) = fetches.next().await {
             match result {
                 UpdateState::Success(socket_addr) => {
-                    println!("[+] Success: Clear(port: {:?})", socket_addr);
+                    println!("[+] Success: Clear(SocketAddr: {:?})", socket_addr);
                     self.pending_updates.get_mut(&socket_addr).unwrap().1.clear();
                 }
                 UpdateState::Failed(socket_addr) => {
+                    println!("[+] Failed: Remove(SocketAddr: {:?})", socket_addr);
                     self.pending_updates.remove(&socket_addr);
                 }
             };
         }
-        println!("[+] Slave Meta Apply Pending Updates DONE");
     }
 }
 
@@ -181,7 +181,6 @@ impl Config {
     pub async fn read_slave_master_connection(&mut self) -> Result<(Vec<u8>, Arc<Mutex<TcpStream>>), ()> {
         match self.replica_of.role {
             Role::Slave { ref mut master_connection, .. } if master_connection.is_some() => {
-                println!("[+] Checking Master Connection as Slave...");
                 let mut buffer = vec![0; 1024];
                 let master_connection_clone = master_connection.clone().unwrap();
                 master_connection_clone.lock().await.readable().await;

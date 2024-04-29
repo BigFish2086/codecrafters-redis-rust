@@ -37,7 +37,9 @@ impl Redis {
         use Cmd::*;
         use RESPType::*;
         match cmd {
-            Ping => SimpleString("PONG".to_string()),
+            Ping => {
+                SimpleString("PONG".to_string())
+            }
             Echo(msg) => BulkString(msg),
             Set {
                 ref key,
@@ -68,30 +70,28 @@ impl Redis {
             Info(section) => BulkString(self.cfg.get_info(section)),
             GetAck => {
                 self.add_pending_update_resp(&resp_array_of_bulks!("REPLCONF", "GETACK", "*"));
-                resp_array_of_bulks!("REPLCONF", "ACK", 0)
+                resp_array_of_bulks!("REPLCONF", "ACK", self.cfg.replica_of.master_repl_offset)
             }
             ReplConf(replica_config) => {
-                let mut slave_meta = self.cfg.slaves.entry(ip).or_insert(SlaveMeta {
-                    host_ip: ip,
-                    metadata: HashMap::new(),
-                    pending_updates: HashMap::new(),
-                });
-                for (cmd, args) in replica_config {
-                    for arg in args {
-                        slave_meta
-                            .metadata
-                            .entry(cmd.clone())
-                            .or_insert_with(Vec::new)
-                            .push(arg);
-                    }
-                }
                 match wr {
                     Some(wr) => {
+                        let mut slave_meta = self.cfg.slaves.entry(ip).or_insert(SlaveMeta {
+                            host_ip: ip,
+                            metadata: HashMap::new(),
+                            pending_updates: HashMap::new(),
+                        });
+                        for (cmd, args) in replica_config {
+                            for arg in args {
+                                slave_meta
+                                    .metadata
+                                    .entry(cmd.clone())
+                                    .or_insert_with(Vec::new)
+                                    .push(arg);
+                            }
+                        }
                         let _ = slave_meta.pending_updates.entry(socket_addr).or_insert((wr.clone(), Vec::new()));
                     }
-                    _ => {
-                        self.cfg.slaves.remove(&ip);
-                    }
+                    _ => {}
                 };
                 SimpleString("OK".to_string())
             }
@@ -138,7 +138,6 @@ impl Redis {
     }
 
     pub async fn apply_pending_updates_per_host(&mut self, host_ip: &IpAddr) {
-        println!("[+] Redis: Apply Pending Update Per Host");
         match self.cfg.slaves.get_mut(host_ip) {
             Some(ref mut slave_meta) => {
                 slave_meta.apply_pending_updates().await;
@@ -148,7 +147,6 @@ impl Redis {
     }
 
     pub async fn apply_all_pending_updates(&mut self) {
-        println!("[+] Redis: Apply ALL Pending Update");
         for (_host_ip, slave_meta) in self.cfg.slaves.iter_mut() {
             slave_meta.apply_pending_updates().await;
         }
