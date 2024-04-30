@@ -66,7 +66,7 @@ impl StreamEntry {
             self.data.insert(stream_id, data);
             Ok(result)
         } else {
-            Err("Stream already exists".to_owned())
+            Err("The ID specified in XADD is equal or smaller than the target stream top item".to_owned())
         }
     }
 
