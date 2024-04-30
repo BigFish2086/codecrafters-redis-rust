@@ -1,5 +1,5 @@
 use anyhow::Context;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use crate::utils;
 use std::fmt;
 
@@ -46,23 +46,25 @@ impl fmt::Display for StreamID {
 
 #[derive(Debug)]
 pub struct StreamEntry {
-    stream_ids_order: VecDeque<StreamID>,
+    // TODO: can have just BTreeMap ?
+    stream_ids_order: BTreeMap<u128, VecDeque<u64>>,
     data: HashMap<StreamID, HashMap<String, String>>,
 }
 
 impl StreamEntry {
     pub fn new() -> Self {
         Self {
-            stream_ids_order: VecDeque::new(),
+            stream_ids_order: BTreeMap::new(),
             data: HashMap::new(),
         }
     }
     pub fn append_stream(&mut self, stream_id: String, data: HashMap<String, String>) -> Result<String, String> {
         let mut stream_id = StreamID::from_string(stream_id);
-        self.update_and_check_id(&mut stream_id)?;
+        self.update_id(&mut stream_id);
+        self.check_id(&stream_id)?;
         if self.data.get(&stream_id) == None {
             let result = stream_id.to_string();
-            self.stream_ids_order.push_back(stream_id.clone());
+            self.stream_ids_order.entry(stream_id.millis).or_insert_with(VecDeque::new).push_back(stream_id.seq);
             self.data.insert(stream_id, data);
             Ok(result)
         } else {
@@ -70,19 +72,32 @@ impl StreamEntry {
         }
     }
 
-    fn update_and_check_id(&self, id: &mut StreamID) -> Result<(), String> {
+    fn update_id(&self, id: &mut StreamID) {
         if id.seq == INVALID_SEQ {
-            if let Some(last_id) = self.stream_ids_order.back() {
-                id.seq = last_id.seq + 1;
+            if let Some(last_id_millis) = self.stream_ids_order.get(&id.millis) {
+
+                if let Some(last_id_seq) = last_id_millis.back() {
+                    id.seq = last_id_seq + 1;
+                } else {
+                    id.seq = if id.millis == 0 { 1 } else { 0 };
+                }
+
             } else {
-                id.seq = 1;
+                id.seq = if id.millis == 0 { 1 } else { 0 };
             }
         }
+    }
+
+    fn check_id(&self, id: &StreamID) -> Result<(), String> {
+        // 0-0 not allowed
         if id.millis == 0 && id.seq == 0 {
             return Err("The ID specified in XADD must be greater than 0-0".to_owned());
         }
-        if let Some(last_id) = self.stream_ids_order.back() {
-            if last_id.millis > id.millis || (last_id.millis == id.millis && last_id.seq > id.seq) {
+        // inserted id time must be greater than last inserted time
+        // last_id seq in same "time" can't be greater than the next id to insert
+        if let Some((last_id_millis, last_id_seq)) = self.stream_ids_order.last_key_value() {
+            let last_id_seq = last_id_seq.back().unwrap_or(&0);
+            if *last_id_millis > id.millis || (*last_id_millis == id.millis && *last_id_seq > id.seq) {
                 return Err("The ID specified in XADD is equal or smaller than the target stream top item".to_owned());
             }
         }
