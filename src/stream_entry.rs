@@ -34,6 +34,24 @@ impl StreamID {
         }
     }
 
+    pub fn to_xread(id: String) -> Self {
+        match id.split("-").collect::<Vec<_>>().as_slice() {
+            &[mt, sn] => {
+                let millis = mt.parse::<u128>().expect("Invalid Stream ID <millis:u128>");
+                let mut seq = sn.parse::<u64>().expect("Invalid Stream ID <seq:u64>");
+                if millis == 0 && seq == 0 {
+                    seq = 1;
+                }
+                Self { millis, seq }
+            }
+            &[mt] => {
+                let millis = mt.parse::<u128>().expect("Invalid Stream ID <millis:u128>");
+                Self { millis, seq: INVALID_SEQ, }
+            }
+            _ => panic!("Invalid Stream ID <millis:u128>:<seq:u64>"),
+        }
+    }
+
     pub fn to_xadd(id: String) -> Self {
         match id.split("-").collect::<Vec<_>>().as_slice() {
             &[mt, sn @ "*"] => {
@@ -92,14 +110,50 @@ impl StreamEntry {
         }
     }
 
-    pub fn query(&self, start_id: String, end_id: String) -> RESPType {
+    fn read_specific_id_as_resp(&self, stream_id: &StreamID) -> RESPType {
+        use RESPType::*;
+        // TODO: ensure that id format is {}-{}
+        let mut stream_id_array = Vec::new();
+        if let Some(stream_id_data) = self.data.get(stream_id) {
+            for (key, value) in stream_id_data.iter() {
+                stream_id_array.push(BulkString(key.clone()));
+                stream_id_array.push(BulkString(value.clone()));
+            }
+        }
+       Array(vec![BulkString(stream_id.to_string()), Array(stream_id_array)])
+    }
+
+    fn read_multiple_seq_as_resp(&self, id_millis: u128) -> RESPType {
+        use RESPType::*;
+        let mut result = Vec::new();
+        if let Some(&ref all_seq_numbers_per_time) = self.stream_ids_order.get(&id_millis) {
+            for seq_number in all_seq_numbers_per_time {
+                let stream_id = StreamID { millis: id_millis, seq: *seq_number };
+                result.push(self.read_specific_id_as_resp(&stream_id));
+            }
+        }
+        Array(result)
+    }
+
+    pub fn query_xread(&self, id: String) -> RESPType {
+        use RESPType::*;
+        let stream_id = StreamID::to_xread(id);
+        let mut result = Vec::new();
+        if stream_id.seq != INVALID_SEQ {
+            result.push(self.read_specific_id_as_resp(&stream_id));
+        } else {
+            result.push(self.read_multiple_seq_as_resp(stream_id.millis));
+        }
+        
+        Array(result)
+    }
+
+    pub fn query_xrange(&self, start_id: String, end_id: String) -> RESPType {
         use RESPType::*;
         // TODO: make sure that start less than end
         let mut start_id = StreamID::to_xrange(start_id);
         let mut end_id = StreamID::to_xrange(end_id);
         let mut result = Vec::new();
-        println!("{:?}, {:?}", start_id, end_id);
-        println!("{:?}", self);
         for (&id_millis, &ref all_seq_numbers_per_time) in self.stream_ids_order.range((Included(&start_id.millis), Included(&end_id.millis))) {
             for seq_number in all_seq_numbers_per_time {
                 if start_id.millis == id_millis && *seq_number < start_id.seq {
@@ -109,14 +163,7 @@ impl StreamEntry {
                     break;
                 }
                 let stream_id = StreamID { millis: id_millis, seq: *seq_number };
-                let mut stream_id_array = Vec::new();
-                if let Some(stream_id_data) = self.data.get(&stream_id) {
-                    for (key, value) in stream_id_data.iter() {
-                        stream_id_array.push(BulkString(key.clone()));
-                        stream_id_array.push(BulkString(value.clone()));
-                    }
-                }
-                result.push(Array(vec![BulkString(stream_id.to_string()), Array(stream_id_array)]));
+                result.push(self.read_specific_id_as_resp(&stream_id));
             }
         }
         Array(result)

@@ -208,9 +208,19 @@ impl Redis {
             XRange { stream_key, start_id, end_id } => {
                 let stream_key = ValueType::new(stream_key);
                 match self.streams.get(&stream_key) {
-                    Some(stream_entry) => stream_entry.query(start_id, end_id),
+                    Some(stream_entry) => stream_entry.query_xrange(start_id, end_id),
                     None => WildCard("*0\r\n".into()),
                 }
+            }
+            XRead { keys, ids } => {
+                let mut result = Vec::new();
+                for (key, id) in keys.iter().zip(ids.iter()) {
+                    let stream_key = ValueType::new(key.clone());
+                    if let Some(stream_entry) = self.streams.get(&stream_key) {
+                        result.push(Array(vec![BulkString(key.clone()), stream_entry.query_xread(id.clone())]))
+                    }
+                }
+                Array(result)
             }
             Wait { num_replicas, timeout, } => {
                 let mut lagging = vec![];

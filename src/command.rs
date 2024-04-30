@@ -39,6 +39,10 @@ pub enum Cmd {
         start_id: String,
         end_id: String,
     },
+    XRead {
+        keys: Vec<String>,
+        ids: Vec<String>,
+    }
 }
 
 impl fmt::Display for Cmd {
@@ -144,6 +148,21 @@ impl Cmd {
                         start_id,
                         end_id,
                     })
+                }
+                "xread" => {
+                    let streams_arg = Self::unpack_bulk_string(
+                        array.get(1).ok_or_else(|| CmdError::MissingArgs)?,
+                    )?;
+                    if !streams_arg.eq("streams") {
+                        return Err(CmdError::InvalidArg);
+                    }
+                    let mut keys = Vec::new();
+                    let mut ids = Vec::new();
+                    for key_id in array[2..].chunks_exact(2) {
+                        keys.push(Self::unpack_bulk_string(&key_id[0])?);
+                        ids.push(Self::unpack_bulk_string(&key_id[1])?);
+                    }
+                    Ok(Self::XRead { keys, ids })
                 }
                 _ => Err(CmdError::NotImplementedCmd),
             }
