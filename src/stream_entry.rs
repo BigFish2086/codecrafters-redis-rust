@@ -16,12 +16,15 @@ const INVALID_SEQ: u64 = u64::MAX;
 impl StreamID {
     pub fn to_xrange(id: String) -> Self {
         match id.split("-").collect::<Vec<_>>().as_slice() {
+            &[mt @ "", sn @ ""] => {
+                // id was equal to `-`
+                Self { millis: 0, seq: 0, }
+            }
             &[mt, sn] => {
                 let millis = mt.parse::<u128>().expect("Invalid Stream ID <millis:u128>");
                 let seq = sn.parse::<u64>().expect("Invalid Stream ID <seq:u64>");
                 Self { millis, seq }
             }
-            &[elem @ "-"] => Self { millis: 0, seq: 0, },
             &[elem @ "+"] => Self { millis: u128::MAX, seq: u64::MAX, },
             &[mt] => {
                 let millis = mt.parse::<u128>().expect("Invalid Stream ID <millis:u128>");
