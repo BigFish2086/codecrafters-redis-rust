@@ -22,7 +22,7 @@ impl RESPType {
         use RESPType::*;
         match self {
             SimpleString(s) => format!("+{}\r\n", s).as_bytes().to_vec(),
-            SimpleError(err) => format!("-{}\r\n", err).as_bytes().to_vec(),
+            SimpleError(err) => format!("-ERR {}\r\n", err).as_bytes().to_vec(),
             Integer(num) => format!(":{}\r\n", num).as_bytes().to_vec(),
             BulkString(s) => format!("${}\r\n{}\r\n", s.len(), s).as_bytes().to_vec(),
             Array(values) => {

@@ -29,6 +29,11 @@ pub enum Cmd {
     ConfigGet(String),
     Keys(String),
     Type(String),
+    XAdd {
+        stream_key: String,
+        stream_id: String,
+        stream_data: HashMap<String, String>,
+    },
 }
 
 impl fmt::Display for Cmd {
@@ -99,6 +104,25 @@ impl Cmd {
                         array.get(1).ok_or_else(|| CmdError::MissingArgs)?,
                     )?;
                     Ok(Self::Type(key))
+                }
+                "xadd" => {
+                    let stream_key = Self::unpack_bulk_string(
+                        array.get(1).ok_or_else(|| CmdError::MissingArgs)?,
+                    )?;
+                    let stream_id = Self::unpack_bulk_string(
+                        array.get(2).ok_or_else(|| CmdError::MissingArgs)?,
+                    )?;
+                    let mut stream_data = HashMap::new();
+                    for key_value in array[3..].chunks_exact(2) {
+                        let key = Self::unpack_bulk_string(&key_value[0])?;
+                        let value = Self::unpack_bulk_string(&key_value[1])?;
+                        stream_data.insert(key, value);
+                    }
+                    Ok(Self::XAdd {
+                        stream_key,
+                        stream_id,
+                        stream_data,
+                    })
                 }
                 _ => Err(CmdError::NotImplementedCmd),
             }

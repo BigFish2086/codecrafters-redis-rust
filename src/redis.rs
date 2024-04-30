@@ -3,6 +3,7 @@ use crate::{
     command::Cmd,
     config::Config,
     data_entry::{key_value_as_rdb, DataEntry, ValueType},
+    stream_entry::{StreamEntry, StreamID},
     rdb::RDBHeader,
     resp::RESPType,
 };
@@ -19,6 +20,7 @@ use tokio::{
 };
 
 pub type RedisDB = HashMap<ValueType, DataEntry>;
+pub type StreamDB = HashMap<ValueType, StreamEntry>;
 pub type WriteStream = Arc<Mutex<OwnedWriteHalf>>;
 
 enum UpdateState {
@@ -98,7 +100,9 @@ impl SlaveMeta {
 #[derive(Debug)]
 pub struct Redis {
     pub cfg: Config,
+    // TODO: what if entered dict has same key as streams?
     pub dict: RedisDB,
+    pub streams: StreamDB,
     pub slaves: HashMap<SocketAddr, SlaveMeta>,
 }
 
@@ -108,6 +112,7 @@ impl Redis {
             cfg,
             dict,
             slaves: HashMap::default(),
+            streams: HashMap::default(),
         }
     }
 
@@ -116,6 +121,7 @@ impl Redis {
             cfg,
             dict: HashMap::default(),
             slaves: HashMap::default(),
+            streams: HashMap::default(),
         }
     }
 
@@ -178,16 +184,25 @@ impl Redis {
             }
             Type(key) => {
                 let key = ValueType::new(key);
-                match self.dict.get(&key) {
-                    Some(data) => {
-                        if data.is_expired() {
-                            self.dict.remove(&key);
-                            SimpleString("none".to_string())
-                        } else {
-                            SimpleString(key.type_as_string())
-                        }
+                if let Some(data) = self.dict.get(&key) {
+                    if data.is_expired() {
+                        self.dict.remove(&key);
+                        SimpleString("none".to_string())
+                    } else {
+                        SimpleString(key.type_as_string())
                     }
-                    None => SimpleString("none".to_string()),
+                } else if let Some(stream) = self.streams.get(&key) {
+                        SimpleString("stream".to_string())
+                } else {
+                    SimpleString("none".to_string())
+                }
+            }
+            XAdd { stream_key, stream_id, stream_data } => {
+                let stream_key = ValueType::new(stream_key);
+                let stream_entry = self.streams.entry(stream_key).or_insert(StreamEntry::new());
+                match stream_entry.append_stream(stream_id, stream_data) {
+                    Ok(stored_id) => BulkString(stored_id),
+                    Err(reason) => SimpleError(reason),
                 }
             }
             Wait { num_replicas, timeout, } => {

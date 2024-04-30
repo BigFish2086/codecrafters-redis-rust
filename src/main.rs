@@ -4,6 +4,7 @@ mod command;
 mod config;
 mod constants;
 mod data_entry;
+mod stream_entry;
 mod parser;
 mod rdb;
 mod redis;
