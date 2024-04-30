@@ -205,6 +205,13 @@ impl Redis {
                     Err(reason) => SimpleError(reason),
                 }
             }
+            XRange { stream_key, start_id, end_id } => {
+                let stream_key = ValueType::new(stream_key);
+                match self.streams.get(&stream_key) {
+                    Some(stream_entry) => stream_entry.query(start_id, end_id),
+                    None => WildCard("*0\r\n".into()),
+                }
+            }
             Wait { num_replicas, timeout, } => {
                 let mut lagging = vec![];
                 for (_socket_addr, slave_meta) in self.slaves.iter() {

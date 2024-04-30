@@ -1,6 +1,6 @@
 use crate::resp::RESPType;
 use crate::resp_array_of_bulks;
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeMap};
 use std::fmt;
 use tokio::time::Duration;
 
@@ -32,7 +32,12 @@ pub enum Cmd {
     XAdd {
         stream_key: String,
         stream_id: String,
-        stream_data: HashMap<String, String>,
+        stream_data: BTreeMap<String, String>,
+    },
+    XRange {
+        stream_key: String,
+        start_id: String,
+        end_id: String,
     },
 }
 
@@ -112,7 +117,7 @@ impl Cmd {
                     let stream_id = Self::unpack_bulk_string(
                         array.get(2).ok_or_else(|| CmdError::MissingArgs)?,
                     )?;
-                    let mut stream_data = HashMap::new();
+                    let mut stream_data = BTreeMap::new();
                     for key_value in array[3..].chunks_exact(2) {
                         let key = Self::unpack_bulk_string(&key_value[0])?;
                         let value = Self::unpack_bulk_string(&key_value[1])?;
@@ -122,6 +127,22 @@ impl Cmd {
                         stream_key,
                         stream_id,
                         stream_data,
+                    })
+                }
+                "xrange" => {
+                    let stream_key = Self::unpack_bulk_string(
+                        array.get(1).ok_or_else(|| CmdError::MissingArgs)?,
+                    )?;
+                    let start_id = Self::unpack_bulk_string(
+                        array.get(2).ok_or_else(|| CmdError::MissingArgs)?,
+                    )?;
+                    let end_id = Self::unpack_bulk_string(
+                        array.get(3).ok_or_else(|| CmdError::MissingArgs)?,
+                    )?;
+                    Ok(Self::XRange {
+                        stream_key,
+                        start_id,
+                        end_id,
                     })
                 }
                 _ => Err(CmdError::NotImplementedCmd),
