@@ -39,14 +39,11 @@ impl StreamID {
             &[mt, sn] => {
                 let millis = mt.parse::<u128>().expect("Invalid Stream ID <millis:u128>");
                 let mut seq = sn.parse::<u64>().expect("Invalid Stream ID <seq:u64>");
-                if millis == 0 && seq == 0 {
-                    seq = 1;
-                }
                 Self { millis, seq }
             }
             &[mt] => {
                 let millis = mt.parse::<u128>().expect("Invalid Stream ID <millis:u128>");
-                Self { millis, seq: INVALID_SEQ, }
+                Self { millis, seq: 0 }
             }
             _ => panic!("Invalid Stream ID <millis:u128>:<seq:u64>"),
         }
@@ -138,13 +135,17 @@ impl StreamEntry {
     pub fn query_xread(&self, id: String) -> RESPType {
         use RESPType::*;
         let stream_id = StreamID::to_xread(id);
+        let stream_upper_bound = StreamID { millis: u128::MAX, seq: u64::MAX };
         let mut result = Vec::new();
-        if stream_id.seq != INVALID_SEQ {
-            result.push(self.read_specific_id_as_resp(&stream_id));
-        } else {
-            result.push(self.read_multiple_seq_as_resp(stream_id.millis));
+        for (&id_millis, &ref all_seq_numbers_per_time) in self.stream_ids_order.range((Included(&stream_id.millis), Included(&stream_upper_bound.millis))) {
+            for seq_number in all_seq_numbers_per_time {
+                if stream_id.millis == id_millis && *seq_number <= stream_id.seq {
+                    continue;
+                }
+                let stream_id = StreamID { millis: id_millis, seq: *seq_number };
+                result.push(self.read_specific_id_as_resp(&stream_id));
+            }
         }
-        
         Array(result)
     }
 

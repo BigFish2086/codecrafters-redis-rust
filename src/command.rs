@@ -156,12 +156,15 @@ impl Cmd {
                     if !streams_arg.eq("streams") {
                         return Err(CmdError::InvalidArg);
                     }
+                    let array = &array[2..];
                     let mut keys = Vec::new();
                     let mut ids = Vec::new();
-                    for key_id in array[2..].chunks_exact(2) {
-                        keys.push(Self::unpack_bulk_string(&key_id[0])?);
-                        ids.push(Self::unpack_bulk_string(&key_id[1])?);
+                    for i in 0..array.len()/2 {
+                        keys.push(Self::unpack_bulk_string(&array[i])?);
+                        ids.push(Self::unpack_bulk_string(&array[i+array.len()/2])?);
                     }
+                    println!("{:?}", keys);
+                    println!("{:?}", ids);
                     Ok(Self::XRead { keys, ids })
                 }
                 _ => Err(CmdError::NotImplementedCmd),
