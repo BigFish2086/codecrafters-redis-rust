@@ -107,54 +107,48 @@ impl StreamEntry {
         }
     }
 
-    fn read_specific_id_as_resp(&self, stream_id: &StreamID) -> RESPType {
+    fn read_specific_id_as_resp(&self, stream_id: &StreamID) -> (RESPType, bool) {
         use RESPType::*;
         // TODO: ensure that id format is {}-{}
         let mut stream_id_array = Vec::new();
+        let mut hash_items = false;
         if let Some(stream_id_data) = self.data.get(stream_id) {
+            hash_items = true;
             for (key, value) in stream_id_data.iter() {
                 stream_id_array.push(BulkString(key.clone()));
                 stream_id_array.push(BulkString(value.clone()));
             }
         }
-       Array(vec![BulkString(stream_id.to_string()), Array(stream_id_array)])
+       (Array(vec![BulkString(stream_id.to_string()), Array(stream_id_array)]), hash_items)
     }
 
-    fn read_multiple_seq_as_resp(&self, id_millis: u128) -> RESPType {
-        use RESPType::*;
-        let mut result = Vec::new();
-        if let Some(&ref all_seq_numbers_per_time) = self.stream_ids_order.get(&id_millis) {
-            for seq_number in all_seq_numbers_per_time {
-                let stream_id = StreamID { millis: id_millis, seq: *seq_number };
-                result.push(self.read_specific_id_as_resp(&stream_id));
-            }
-        }
-        Array(result)
-    }
-
-    pub fn query_xread(&self, id: String) -> RESPType {
+    pub fn query_xread(&self, id: String) -> (RESPType, bool) {
         use RESPType::*;
         let stream_id = StreamID::to_xread(id);
         let stream_upper_bound = StreamID { millis: u128::MAX, seq: u64::MAX };
         let mut result = Vec::new();
+        let mut hash_items = false;
         for (&id_millis, &ref all_seq_numbers_per_time) in self.stream_ids_order.range((Included(&stream_id.millis), Included(&stream_upper_bound.millis))) {
             for seq_number in all_seq_numbers_per_time {
                 if stream_id.millis == id_millis && *seq_number <= stream_id.seq {
                     continue;
                 }
                 let stream_id = StreamID { millis: id_millis, seq: *seq_number };
-                result.push(self.read_specific_id_as_resp(&stream_id));
+                let (data_as_resp, data_has_items) = self.read_specific_id_as_resp(&stream_id);
+                hash_items = hash_items | data_has_items;
+                result.push(data_as_resp);
             }
         }
-        Array(result)
+        (Array(result), hash_items)
     }
 
-    pub fn query_xrange(&self, start_id: String, end_id: String) -> RESPType {
+    pub fn query_xrange(&self, start_id: String, end_id: String) -> (RESPType, bool) {
         use RESPType::*;
         // TODO: make sure that start less than end
         let mut start_id = StreamID::to_xrange(start_id);
         let mut end_id = StreamID::to_xrange(end_id);
         let mut result = Vec::new();
+        let mut hash_items = false;
         for (&id_millis, &ref all_seq_numbers_per_time) in self.stream_ids_order.range((Included(&start_id.millis), Included(&end_id.millis))) {
             for seq_number in all_seq_numbers_per_time {
                 if start_id.millis == id_millis && *seq_number < start_id.seq {
@@ -164,10 +158,12 @@ impl StreamEntry {
                     break;
                 }
                 let stream_id = StreamID { millis: id_millis, seq: *seq_number };
-                result.push(self.read_specific_id_as_resp(&stream_id));
+                let (data_as_resp, data_has_items) = self.read_specific_id_as_resp(&stream_id);
+                hash_items = hash_items | data_has_items;
+                result.push(data_as_resp);
             }
         }
-        Array(result)
+        (Array(result), hash_items)
     }
 
     fn update_id(&self, id: &mut StreamID) {

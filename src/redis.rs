@@ -14,7 +14,11 @@ use std::{
     sync::{Arc, atomic::{AtomicUsize, Ordering}},
 };
 use tokio::{
-    sync::Mutex,
+    sync::{
+        Mutex,
+        broadcast::{self, Sender, Receiver},
+    },
+    time::self,
     task::JoinSet,
     net::tcp::OwnedWriteHalf,
 };
@@ -104,6 +108,7 @@ pub struct Redis {
     pub dict: RedisDB,
     pub streams: StreamDB,
     pub slaves: HashMap<SocketAddr, SlaveMeta>,
+    pub stream_senders: HashMap<String, Sender<RESPType>>,
 }
 
 impl Redis {
@@ -113,6 +118,7 @@ impl Redis {
             dict,
             slaves: HashMap::default(),
             streams: HashMap::default(),
+            stream_senders: HashMap::default(),
         }
     }
 
@@ -122,6 +128,18 @@ impl Redis {
             dict: HashMap::default(),
             slaves: HashMap::default(),
             streams: HashMap::default(),
+            stream_senders: HashMap::default(),
+        }
+    }
+
+    fn get_stream_reciver(&mut self, key: &String) -> Receiver<RESPType> {
+        match self.stream_senders.get(key) {
+            Some(sender) => sender.subscribe(),
+            _ => {
+                let (sender, receiver) = broadcast::channel(1);
+                self.stream_senders.insert(key.clone(), sender);
+                receiver
+            }
         }
     }
 
@@ -198,29 +216,66 @@ impl Redis {
                 }
             }
             XAdd { stream_key, stream_id, stream_data } => {
-                let stream_key = ValueType::new(stream_key);
-                let stream_entry = self.streams.entry(stream_key).or_insert(StreamEntry::new());
-                match stream_entry.append_stream(stream_id, stream_data) {
-                    Ok(stored_id) => BulkString(stored_id),
+                let key = ValueType::new(stream_key.clone());
+                let stream_entry = self.streams.entry(key).or_insert(StreamEntry::new());
+                match stream_entry.append_stream(stream_id, stream_data.clone()) {
+                    Ok(stored_id) => {
+                        if let Some(sender) = self.stream_senders.get(&stream_key) {
+                            let mut stream_id_array = Vec::new();
+                            for (key, value) in stream_data.iter() {
+                                stream_id_array.push(BulkString(key.clone()));
+                                stream_id_array.push(BulkString(value.clone()));
+                            }
+                            let data = Array(vec![BulkString(stored_id.clone()), Array(stream_id_array)]);
+                            sender.send(data);
+                        }
+                        BulkString(stored_id.clone())
+                    }
                     Err(reason) => SimpleError(reason),
                 }
             }
             XRange { stream_key, start_id, end_id } => {
                 let stream_key = ValueType::new(stream_key);
                 match self.streams.get(&stream_key) {
-                    Some(stream_entry) => stream_entry.query_xrange(start_id, end_id),
+                    Some(stream_entry) => {
+                        let (resp, is_resp_empty) = stream_entry.query_xrange(start_id, end_id);
+                        resp
+                    }
                     None => WildCard("*0\r\n".into()),
                 }
             }
-            XRead { keys, ids } => {
+            XRead { timeout, keys, ids } => {
                 let mut result = Vec::new();
+                let mut has_items = false;
                 for (key, id) in keys.iter().zip(ids.iter()) {
                     let stream_key = ValueType::new(key.clone());
                     if let Some(stream_entry) = self.streams.get(&stream_key) {
-                        result.push(Array(vec![BulkString(key.clone()), stream_entry.query_xread(id.clone())]))
+                        let (resp, resp_has_empty) = stream_entry.query_xread(id.clone());
+                        has_items = has_items | resp_has_empty;
+                        result.push(Array(vec![BulkString(key.clone()), resp]))
                     }
                 }
-                Array(result)
+                if has_items == true {
+                    return Array(result);
+                }
+                if let Some(dur) = timeout {
+                    let block_read = async {
+                        let mut tasks = JoinSet::new();
+                        for key in keys {
+                            let key = key.clone();
+                            let mut receiver = self.get_stream_reciver(&key);
+                            tasks.spawn( async move {
+                                (key, receiver.recv().await.unwrap()) 
+                            });
+                        }
+                        tasks.join_next().await.expect("Join Set Tasks is Empty")
+                    };
+                    if let Ok(res) = time::timeout(dur, block_read).await {
+                        let (key, entry_resp) = res.unwrap();
+                        return Array(vec![Array(vec![BulkString(key.clone()), entry_resp])]);
+                    }
+                }
+                WildCard("$-1\r\n".into())
             }
             Wait { num_replicas, timeout, } => {
                 let mut lagging = vec![];

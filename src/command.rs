@@ -40,6 +40,7 @@ pub enum Cmd {
         end_id: String,
     },
     XRead {
+        timeout: Option<Duration>,
         keys: Vec<String>,
         ids: Vec<String>,
     }
@@ -150,13 +151,30 @@ impl Cmd {
                     })
                 }
                 "xread" => {
-                    let streams_arg = Self::unpack_bulk_string(
+                    let mut block = None;
+                    let option = Self::unpack_bulk_string(
                         array.get(1).ok_or_else(|| CmdError::MissingArgs)?,
                     )?;
-                    if !streams_arg.eq("streams") {
-                        return Err(CmdError::InvalidArg);
-                    }
-                    let array = &array[2..];
+                    let array = match option.to_lowercase().as_str() {
+                        "block" => {
+                            let timeout = Self::unpack_bulk_string(
+                                array.get(2).ok_or_else(|| CmdError::MissingArgs)?,
+                            )?;
+                            let timeout = timeout.parse::<u64>().map_err(|_| CmdError::InvalidArg)?;
+                            let timeout = Duration::from_millis(timeout);
+                            block = Some(timeout);
+
+                            let option = Self::unpack_bulk_string(
+                                array.get(3).ok_or_else(|| CmdError::MissingArgs)?,
+                            )?;
+                            if option.to_lowercase().as_str() != "streams" {
+                                return Err(CmdError::InvalidArg)?;
+                            }
+                            &array[4..]
+                        }
+                        "streams" => &array[2..],
+                        _ => return Err(CmdError::InvalidArg)?,
+                    };
                     let mut keys = Vec::new();
                     let mut ids = Vec::new();
                     for i in 0..array.len()/2 {
@@ -165,7 +183,7 @@ impl Cmd {
                     }
                     println!("{:?}", keys);
                     println!("{:?}", ids);
-                    Ok(Self::XRead { keys, ids })
+                    Ok(Self::XRead { timeout: block, keys, ids })
                 }
                 _ => Err(CmdError::NotImplementedCmd),
             }
