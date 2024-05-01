@@ -101,43 +101,48 @@ impl SlaveMeta {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Redis {
-    pub cfg: Config,
+    pub cfg:            Arc<Mutex<Config>>,
     // TODO: what if entered dict has same key as streams?
-    pub dict: RedisDB,
-    pub streams: StreamDB,
-    pub slaves: HashMap<SocketAddr, SlaveMeta>,
-    pub stream_senders: HashMap<String, Sender<RESPType>>,
+    pub dict:           Arc<Mutex<RedisDB>>,
+    pub streams:        Arc<Mutex<StreamDB>>,
+    pub slaves:         Arc<Mutex<HashMap<SocketAddr, SlaveMeta>>>,
+    pub stream_senders: Arc<Mutex<HashMap<String, Sender<RESPType>>>>,
 }
 
 impl Redis {
     pub fn new(cfg: Config, dict: RedisDB) -> Self {
         Self {
-            cfg,
-            dict,
-            slaves: HashMap::default(),
-            streams: HashMap::default(),
-            stream_senders: HashMap::default(),
+            cfg:            Arc::new(Mutex::new(cfg)),
+            dict:           Arc::new(Mutex::new(dict)),
+            slaves:         Arc::new(Mutex::new(HashMap::default())),
+            streams:        Arc::new(Mutex::new(HashMap::default())),
+            stream_senders: Arc::new(Mutex::new(HashMap::default())),
         }
     }
 
     pub fn with_config(cfg: Config) -> Self {
         Self {
-            cfg,
-            dict: HashMap::default(),
-            slaves: HashMap::default(),
-            streams: HashMap::default(),
-            stream_senders: HashMap::default(),
+            cfg:            Arc::new(Mutex::new(cfg)),
+            dict:           Arc::new(Mutex::new(HashMap::default())),
+            slaves:         Arc::new(Mutex::new(HashMap::default())),
+            streams:        Arc::new(Mutex::new(HashMap::default())),
+            stream_senders: Arc::new(Mutex::new(HashMap::default())),
         }
     }
 
-    fn get_stream_reciver(&mut self, key: &String) -> Receiver<RESPType> {
-        match self.stream_senders.get(key) {
+    pub async fn incr_master_repl_offset(&mut self, value: u64) {
+        self.cfg.lock().await.replica_of.master_repl_offset += value;
+    }
+
+    async fn get_stream_reciver(&mut self, key: &String) -> Receiver<RESPType> {
+        let mut stream_senders_guard = self.stream_senders.lock().await;
+        match stream_senders_guard.get(key) {
             Some(sender) => sender.subscribe(),
             _ => {
                 let (sender, receiver) = broadcast::channel(1);
-                self.stream_senders.insert(key.clone(), sender);
+                stream_senders_guard.insert(key.clone(), sender);
                 receiver
             }
         }
@@ -154,24 +159,23 @@ impl Redis {
         match cmd {
             Ping => SimpleString("PONG".to_string()),
             Echo(msg) => BulkString(msg),
-            Set {
-                ref key,
-                ref value,
-                px,
-            } => {
-                self.dict.insert(
+            Set { ref key, ref value, px, } => {
+                let mut dict_guard = self.dict.lock().await;
+                dict_guard.insert(
                     ValueType::new(key.clone()),
                     DataEntry::new(value.clone(), px),
                 );
+                drop(dict_guard);
                 self.add_pending_update_cmd(&cmd);
                 SimpleString("OK".to_string())
             }
             Get(key) => {
                 let key = ValueType::new(key);
-                match self.dict.get(&key) {
+                let mut dict_guard = self.dict.lock().await;
+                match dict_guard.get(&key) {
                     Some(data) => {
                         if data.is_expired() {
-                            self.dict.remove(&key);
+                            dict_guard.remove(&key);
                             Null
                         } else {
                             BulkString(data.value.as_string())
@@ -180,47 +184,53 @@ impl Redis {
                     None => Null,
                 }
             }
-            Info(section) => BulkString(self.cfg.get_info(section)),
+            Info(section) => BulkString(self.cfg.lock().await.get_info(section)),
             GetAck => {
                 self.add_pending_update_resp(&resp_array_of_bulks!("REPLCONF", "GETACK", "*"));
-                resp_array_of_bulks!("REPLCONF", "ACK", self.cfg.replica_of.master_repl_offset)
+                resp_array_of_bulks!("REPLCONF", "ACK", self.cfg.lock().await.replica_of.master_repl_offset)
             }
             Ack => {
                 WildCard("".into())
             }
             ConfigGet(param) => {
-                resp_array_of_bulks!(param, self.cfg.parameters.get(&param).unwrap_or(&"-1".to_string()))
+                resp_array_of_bulks!(param, self.cfg.lock().await.parameters.get(&param).unwrap_or(&"-1".to_string()))
             }
             Keys(_pattern) => {
                 // TODO: should match the given pattern instead
-                self.dict.retain(|_, v| !v.is_expired());
-                let mut result = Vec::with_capacity(self.dict.len());
-                for (key, _value) in self.dict.iter() {
+                let mut dict_guard = self.dict.lock().await;
+                dict_guard.retain(|_, v| !v.is_expired());
+                let mut result = Vec::with_capacity(dict_guard.len());
+                for (key, _value) in dict_guard.iter() {
                     result.push(BulkString(key.as_string()));
                 }
+                drop(dict_guard);
                 Array(result)
             }
             Type(key) => {
                 let key = ValueType::new(key);
-                if let Some(data) = self.dict.get(&key) {
+                let mut dict_guard = self.dict.lock().await;
+                if let Some(data) = dict_guard.get(&key) {
                     if data.is_expired() {
-                        self.dict.remove(&key);
+                        dict_guard.remove(&key);
                         SimpleString("none".to_string())
                     } else {
                         SimpleString(key.type_as_string())
                     }
-                } else if let Some(stream) = self.streams.get(&key) {
-                        SimpleString("stream".to_string())
+                } else if let Some(stream) = self.streams.lock().await.get(&key) {
+                    drop(dict_guard);
+                    SimpleString("stream".to_string())
                 } else {
+                    drop(dict_guard);
                     SimpleString("none".to_string())
                 }
             }
             XAdd { stream_key, stream_id, stream_data } => {
                 let key = ValueType::new(stream_key.clone());
-                let stream_entry = self.streams.entry(key).or_insert(StreamEntry::new());
+                let mut stream_guard = self.streams.lock().await;
+                let stream_entry = stream_guard.entry(key).or_insert(StreamEntry::new());
                 match stream_entry.append_stream(stream_id, stream_data.clone()) {
                     Ok(stored_id) => {
-                        if let Some(sender) = self.stream_senders.get(&stream_key) {
+                        if let Some(sender) = self.stream_senders.lock().await.get(&stream_key) {
                             let mut stream_id_array = Vec::new();
                             for (key, value) in stream_data.iter() {
                                 stream_id_array.push(BulkString(key.clone()));
@@ -236,7 +246,7 @@ impl Redis {
             }
             XRange { stream_key, start_id, end_id } => {
                 let stream_key = ValueType::new(stream_key);
-                match self.streams.get(&stream_key) {
+                match self.streams.lock().await.get(&stream_key) {
                     Some(stream_entry) => {
                         let (resp, is_resp_empty) = stream_entry.query_xrange(start_id, end_id);
                         resp
@@ -249,11 +259,13 @@ impl Redis {
                 let mut has_items = false;
                 for (key, id) in keys.iter().zip(ids.iter()) {
                     let stream_key = ValueType::new(key.clone());
-                    if let Some(stream_entry) = self.streams.get(&stream_key) {
+                    let streams_guard = self.streams.lock().await;
+                    if let Some(stream_entry) = streams_guard.get(&stream_key) {
                         let (resp, resp_has_empty) = stream_entry.query_xread(id.clone());
                         has_items = has_items | resp_has_empty;
                         result.push(Array(vec![BulkString(key.clone()), resp]))
                     }
+                    drop(streams_guard);
                 }
                 if has_items == true {
                     return Array(result);
@@ -263,7 +275,7 @@ impl Redis {
                         let mut tasks = JoinSet::new();
                         for key in keys {
                             let key = key.clone();
-                            let mut receiver = self.get_stream_reciver(&key);
+                            let mut receiver = self.get_stream_reciver(&key).await;
                             tasks.spawn( async move {
                                 (key, receiver.recv().await.unwrap()) 
                             });
@@ -279,17 +291,20 @@ impl Redis {
             }
             Wait { num_replicas, timeout, } => {
                 let mut lagging = vec![];
-                for (_socket_addr, slave_meta) in self.slaves.iter() {
-                    if slave_meta.actual_offset > self.cfg.replica_of.master_repl_offset as usize {
+                let slaves_guard = self.slaves.lock().await;
+                let slaves_len = slaves_guard.len();
+                for (_socket_addr, slave_meta) in slaves_guard.iter() {
+                    if slave_meta.actual_offset > self.cfg.lock().await.replica_of.master_repl_offset as usize {
                         lagging.push(slave_meta.clone());
                     }
                 }
+                drop(slaves_guard);
                 if lagging.is_empty() {
-                    return Integer(self.slaves.len() as i64);
+                    return Integer(slaves_len as i64);
                 }
-                let init_num_acks = self.slaves.len() - lagging.len();
+                let init_num_acks = slaves_len - lagging.len();
                 let num_acks = Arc::new(AtomicUsize::new(init_num_acks));
-                println!("[+] slaves.len() = {:?}, init_num_acks = {:?}", self.slaves.len(), init_num_acks);
+                println!("[+] slaves.len() = {:?}, init_num_acks = {:?}", slaves_len, init_num_acks);
                 let mut tasks = JoinSet::new();
                 for slave_meta in lagging.iter_mut() {
                     let mut slave_meta = slave_meta.clone();
@@ -330,24 +345,15 @@ impl Redis {
             ReplConf(replica_config) => {
                 match wr {
                     Some(wr) => {
-                        let slave_meta = self.slaves.entry(socket_addr).or_insert(SlaveMeta {
+                        let slave_meta = self.slaves.lock().await.entry(socket_addr).or_insert(SlaveMeta {
                             expected_offset: 0,
                             actual_offset: 0,
                             lifetime_limit: 0,
                             socket_addr,
                             wr: wr.clone(),
-                            metadata: HashMap::new(),
+                            metadata: replica_config,
                             pending_updates: Vec::new(),
                         });
-                        for (cmd, args) in replica_config {
-                            for arg in args {
-                                slave_meta
-                                    .metadata
-                                    .entry(cmd.clone())
-                                    .or_insert_with(Vec::new)
-                                    .push(arg);
-                            }
-                        }
                     }
                     _ => {}
                 };
@@ -360,11 +366,11 @@ impl Redis {
                     aux_settings: std::collections::HashMap::new(),
                 };
                 let mut rdb_content = rdb_header.as_rdb();
-                rdb_content.extend_from_slice(&self.as_rdb()[..]);
+                rdb_content.extend_from_slice(&self.as_rdb().await[..]);
                 rdb_content.push(crate::constants::EOF);
 
                 let mut msg: Vec<u8> =
-                    format!("+FULLRESYNC {} 0\r\n", &self.cfg.replica_of.master_replid)
+                    format!("+FULLRESYNC {} 0\r\n", &self.cfg.lock().await.replica_of.master_replid)
                         .as_bytes()
                         .to_vec();
                 msg.extend_from_slice(format!("${}\r\n", rdb_content.len()).as_bytes());
@@ -375,30 +381,30 @@ impl Redis {
         }
     }
 
-    pub fn as_rdb(&self) -> Vec<u8> {
+    pub async fn as_rdb(&self) -> Vec<u8> {
         let mut out: Vec<u8> = vec![];
-        for (key, value) in self.dict.iter() {
+        for (key, value) in self.dict.lock().await.iter() {
             out.extend_from_slice(&key_value_as_rdb(&key, &value)[..]);
         }
         out
     }
 
-    pub fn add_pending_update_resp(&mut self, resp: &RESPType) {
-        for (_socket_addr, slave_meta) in self.slaves.iter_mut() {
+    pub async fn add_pending_update_resp(&mut self, resp: &RESPType) {
+        for (_socket_addr, slave_meta) in self.slaves.lock().await.iter_mut() {
             slave_meta.append_update(&resp.serialize());
         }
     }
 
-    pub fn add_pending_update_cmd(&mut self, cmd: &Cmd) {
-        for (_socket_addr, slave_meta) in self.slaves.iter_mut() {
+    pub async fn add_pending_update_cmd(&mut self, cmd: &Cmd) {
+        for (_socket_addr, slave_meta) in self.slaves.lock().await.iter_mut() {
             slave_meta.append_update(&cmd.to_resp_array_of_bulks().serialize());
         }
     }
 
     pub async fn apply_all_pending_updates(&mut self) -> u64 {
         let mut updates_done = 0;
-        let slaves_clone: HashMap<SocketAddr, SlaveMeta> = self
-            .slaves
+        let slaves_guard = self.slaves.lock().await;
+        let slaves_clone: HashMap<SocketAddr, SlaveMeta> = slaves_guard
             .iter()
             .filter_map(|(socket_addr, slave_meta)| {
                 if !slave_meta.pending_updates.is_empty() {
@@ -408,6 +414,7 @@ impl Redis {
                 }
             })
             .collect();
+        drop(slaves_guard);
         let mut fetches = stream::iter(slaves_clone.into_iter().map(
             |(_socket_addr, mut slave_meta)| async move {
                 return slave_meta.apply_pending_updates().await;
@@ -415,17 +422,18 @@ impl Redis {
         ))
         .buffer_unordered(8);
         while let Some(result) = fetches.next().await {
+            let mut slaves_guard = self.slaves.lock().await;
             match result {
                 UpdateState::Success(socket_addr, expected_incr, actual_incr) => {
                     println!("[+] Success: Clear(SocketAddr: {:?})", socket_addr);
-                    let slave_meta = self.slaves.get_mut(&socket_addr).unwrap();
+                    let slave_meta = slaves_guard.get_mut(&socket_addr).unwrap();
                     slave_meta.pending_updates.clear();
                     slave_meta.expected_offset += expected_incr;
                     slave_meta.actual_offset += actual_incr;
                     updates_done += 1;
                 }
                 UpdateState::Failed(socket_addr) => {
-                    if let Entry::Occupied(mut slave) = self.slaves.entry(socket_addr) {
+                    if let Entry::Occupied(mut slave) = slaves_guard.entry(socket_addr) {
                         if slave.get().lifetime_limit >= crate::constants::SLAVE_LIFETIME_LIMIT {
                             println!("[+] Failed for {:?} times => Remove(SocketAddr: {:?})", slave.get().lifetime_limit, socket_addr);
                             slave.remove_entry();
@@ -436,6 +444,7 @@ impl Redis {
                     }
                 }
             };
+            drop(slaves_guard);
         }
         return updates_done;
     }

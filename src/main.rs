@@ -37,7 +37,7 @@ use tokio::{
     time::self,
 };
 
-async fn act_as_master(stream: TcpStream, socket_addr: SocketAddr, redis: Arc<Mutex<Redis>>) -> anyhow::Result<()> {
+async fn act_as_master(stream: TcpStream, socket_addr: SocketAddr, mut redis: Redis) -> anyhow::Result<()> {
     println!("[+] Got Connection: {:?}", socket_addr);
     let (rx, wr) = stream.into_split();
     let wr = Arc::new(Mutex::new(wr));
@@ -58,10 +58,7 @@ async fn act_as_master(stream: TcpStream, socket_addr: SocketAddr, redis: Arc<Mu
                 loop {
                     let (parsed, rem) = Parser::parse_resp(input)?;
                     let cmd = Cmd::from_resp(parsed)?;
-                    let resp = redis
-                        .lock()
-                        .await
-                        .apply_cmd(socket_addr, Some(Arc::clone(&wr)), cmd).await;
+                    let resp = redis.apply_cmd(socket_addr, Some(Arc::clone(&wr)), cmd).await;
                     if wr.lock().await.writable().await.is_ok() {
                         match wr.lock().await.try_write(&resp.serialize()) {
                             Ok(_n) => (),
@@ -76,14 +73,15 @@ async fn act_as_master(stream: TcpStream, socket_addr: SocketAddr, redis: Arc<Mu
                 };
             }
             _ = pending_interval.tick() => {
-                redis.lock().await.apply_all_pending_updates().await;
+                redis.apply_all_pending_updates().await;
             }
         }
     }
 }
 
-async fn act_as_replica(redis: Arc<Mutex<Redis>>) -> anyhow::Result<Arc<Mutex<TcpStream>>> {
-    let stream = match redis.lock().await.cfg.replica_of.role {
+async fn act_as_replica(mut redis: Redis) -> anyhow::Result<Arc<Mutex<TcpStream>>> {
+    let mut cfg_guard = redis.cfg.lock().await;
+    let stream = match cfg_guard.replica_of.role {
         Role::Slave {
             ref master_host,
             ref master_port,
@@ -99,6 +97,8 @@ async fn act_as_replica(redis: Arc<Mutex<Redis>>) -> anyhow::Result<Arc<Mutex<Tc
         }
         _ => anyhow::bail!("not replica then it can't send handshake"),
     };
+    let service_port = cfg_guard.service_port;
+    drop(cfg_guard);
 
     let read_response = |stream: Arc<Mutex<TcpStream>>| async move {
         let stream = stream.lock().await;
@@ -132,9 +132,8 @@ async fn act_as_replica(redis: Arc<Mutex<Redis>>) -> anyhow::Result<Arc<Mutex<Tc
         .await
         .context("slave PING can't reach its master")?;
     let actual = read_response(Arc::clone(&stream)).await?;
-    validate_response(actual, RESPType::SimpleString("PONG".to_string()));
+    let  _ = validate_response(actual, RESPType::SimpleString("PONG".to_string()));
 
-    let service_port = redis.lock().await.cfg.service_port;
     stream
         .lock()
         .await
@@ -142,7 +141,7 @@ async fn act_as_replica(redis: Arc<Mutex<Redis>>) -> anyhow::Result<Arc<Mutex<Tc
         .await
         .context("slave REPLCONF can't reach its master")?;
     let actual = read_response(Arc::clone(&stream)).await?;
-    validate_response(actual, RESPType::SimpleString("OK".to_string()));
+    let _ = validate_response(actual, RESPType::SimpleString("OK".to_string()));
 
     stream
         .lock()
@@ -151,7 +150,7 @@ async fn act_as_replica(redis: Arc<Mutex<Redis>>) -> anyhow::Result<Arc<Mutex<Tc
         .await
         .context("slave REPLCONF can't reach its master")?;
     let actual = read_response(Arc::clone(&stream)).await?;
-    validate_response(actual, RESPType::SimpleString("OK".to_string()));
+    let _ =validate_response(actual, RESPType::SimpleString("OK".to_string()));
 
     // TODO: add response validation for PSYNC cmd
     stream
@@ -174,9 +173,7 @@ async fn act_as_replica(redis: Arc<Mutex<Redis>>) -> anyhow::Result<Arc<Mutex<Tc
     // TODO: it would be better if the parsers for RESP and RDB have similar API
     // simple and better change, would be if both agree on mutably change `input`
     let (rdb_header, redis_db) = RDBParser::from_rdb_resp(&mut input)?;
-    println!("[+] RDB Header: {:?}", rdb_header);
-    redis.lock().await.dict = redis_db;
-    println!("[+] RDB DataBase Parsed and written to redis: {:?}", redis.lock().await.dict);
+    redis.dict = Arc::new(Mutex::new(redis_db));
 
     let client_socket_addr = stream.lock().await.peer_addr()?;
     while !input.is_empty() {
@@ -184,14 +181,9 @@ async fn act_as_replica(redis: Arc<Mutex<Redis>>) -> anyhow::Result<Arc<Mutex<Tc
         let (parsed, rem) = Parser::parse_resp(&input)?;
         if let Ok(cmd) = Cmd::from_resp(parsed) {
             let replica_need_to_respond = matches!(cmd, Cmd::GetAck);
-            let resp = redis
-                .lock()
-                .await
-                .apply_cmd(client_socket_addr, None, cmd).await;
-            redis
-                .lock()
-                .await
-                .cfg.replica_of.master_repl_offset += (input_len_before_parsing - rem.len()) as u64;
+            let resp = redis.apply_cmd(client_socket_addr, None, cmd).await;
+            // XXX
+            redis.incr_master_repl_offset((input_len_before_parsing - rem.len()) as u64).await;
             if replica_need_to_respond {
                 if stream.lock().await.writable().await.is_ok() {
                     match stream.lock().await.try_write(&resp.serialize()) {
@@ -210,7 +202,7 @@ async fn act_as_replica(redis: Arc<Mutex<Redis>>) -> anyhow::Result<Arc<Mutex<Tc
 
 }
 
-async fn replica_handle_master_connection(master_connection: Arc<Mutex<TcpStream>>, redis: Arc<Mutex<Redis>>) -> anyhow::Result<()> {
+async fn replica_handle_master_connection(master_connection: Arc<Mutex<TcpStream>>, mut redis: Redis) -> anyhow::Result<()> {
     let client_socket_addr = master_connection.lock().await.peer_addr()?;
     let master_connection_guard = master_connection.lock().await;
 
@@ -232,14 +224,8 @@ async fn replica_handle_master_connection(master_connection: Arc<Mutex<TcpStream
         let (parsed, rem) = Parser::parse_resp(input)?;
         if let Ok(cmd) = Cmd::from_resp(parsed) {
             let replica_need_to_respond = matches!(cmd, Cmd::GetAck);
-            let resp = redis
-                .lock()
-                .await
-                .apply_cmd(client_socket_addr, None, cmd).await;
-            redis
-                .lock()
-                .await
-                .cfg.replica_of.master_repl_offset += (input_len_before_parsing - rem.len()) as u64;
+            let resp = redis.apply_cmd(client_socket_addr, None, cmd).await;
+            redis.incr_master_repl_offset((input_len_before_parsing - rem.len()) as u64).await;
             if replica_need_to_respond {
                 if master_connection_guard.writable().await.is_ok() {
                     match master_connection_guard.try_write(&resp.serialize()) {
@@ -278,19 +264,19 @@ async fn main() -> anyhow::Result<()> {
         match RDBParser::from_rdb_file(&mut ibytes) {
             Ok((rdb_header, redis_db)) => {
                 println!("{:#?}, {:#?}", rdb_header, redis_db);
-                Arc::new(Mutex::new(Redis::new(cfg, redis_db)))
+                Redis::new(cfg, redis_db)
             }
-            _ => Arc::new(Mutex::new(Redis::with_config(cfg))),
+            _ => Redis::with_config(cfg),
         }
     } else {
-        Arc::new(Mutex::new(Redis::with_config(cfg)))
+        Redis::with_config(cfg)
     };
 
     if !is_replica {
         loop {
             match listener.accept().await {
                 Ok((stream, socket_addr)) => {
-                    let redis = Arc::clone(&redis);
+                    let redis = redis.clone();
                     tokio::spawn(async move { act_as_master(stream, socket_addr, redis).await });
                 }
                 Err(e) => {
@@ -299,11 +285,12 @@ async fn main() -> anyhow::Result<()> {
             };
         }
     } else {
-        let master_connection = act_as_replica(Arc::clone(&redis)).await?;
+        let master_connection = act_as_replica(redis.clone()).await?;
+        println!("{:?}", redis.dict.lock().await);
         loop {
             tokio::select! {
                 Ok((stream, socket_addr)) = listener.accept() => {
-                    let redis = Arc::clone(&redis);
+                    let redis = redis.clone();
                     let master_connection = Arc::clone(&master_connection);
                     tokio::spawn(async move { act_as_master(stream, socket_addr, redis).await });
                 }
@@ -311,7 +298,7 @@ async fn main() -> anyhow::Result<()> {
                 Ok(_) = async {
                     master_connection.lock().await.readable().await
                 } => {
-                    let redis = Arc::clone(&redis);
+                    let redis = redis.clone();
                     let master_connection = Arc::clone(&master_connection);
                     // XXX that spawns a lot of threads
                     tokio::spawn(async move { replica_handle_master_connection(master_connection, redis).await });
