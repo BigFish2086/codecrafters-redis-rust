@@ -1,7 +1,7 @@
 use anyhow::Context;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::ops::Bound::Included;
-use crate::RESPType;
+use crate::RespType;
 use crate::utils;
 use std::fmt;
 
@@ -107,8 +107,8 @@ impl StreamEntry {
         }
     }
 
-    fn read_specific_id_as_resp(&self, stream_id: &StreamID) -> (RESPType, bool) {
-        use RESPType::*;
+    fn read_specific_id_as_resp(&self, stream_id: &StreamID) -> (RespType, bool) {
+        use RespType::*;
         // TODO: ensure that id format is {}-{}
         let mut stream_id_array = Vec::new();
         let mut hash_items = false;
@@ -122,8 +122,8 @@ impl StreamEntry {
        (Array(vec![BulkString(stream_id.to_string()), Array(stream_id_array)]), hash_items)
     }
 
-    pub fn query_xread(&self, id: String) -> (RESPType, bool) {
-        use RESPType::*;
+    pub fn query_xread(&self, id: String) -> (RespType, bool) {
+        use RespType::*;
         let stream_id = StreamID::to_xread(id);
         let stream_upper_bound = StreamID { millis: u128::MAX, seq: u64::MAX };
         let mut result = Vec::new();
@@ -142,8 +142,8 @@ impl StreamEntry {
         (Array(result), hash_items)
     }
 
-    pub fn query_xrange(&self, start_id: String, end_id: String) -> (RESPType, bool) {
-        use RESPType::*;
+    pub fn query_xrange(&self, start_id: String, end_id: String) -> (RespType, bool) {
+        use RespType::*;
         // TODO: make sure that start less than end
         let mut start_id = StreamID::to_xrange(start_id);
         let mut end_id = StreamID::to_xrange(end_id);
