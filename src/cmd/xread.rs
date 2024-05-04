@@ -46,7 +46,12 @@ impl Cmd for XRead {
                 }
                 tasks.join_next().await.expect("Join Set Tasks is Empty")
             };
-            if let Ok(res) = time::timeout(dur, block_read).await {
+            let res = if dur == Duration::ZERO {
+                Some(block_read.await)
+            } else {
+                time::timeout(dur, block_read).await.ok()
+            };
+            if let Some(res) = res {
                 let (key, entry_resp) = res.unwrap();
                 return Array(vec![Array(vec![BulkString(key.clone()), Array(vec![entry_resp])])]);
             }
