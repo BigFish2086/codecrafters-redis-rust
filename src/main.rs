@@ -49,49 +49,44 @@ async fn handle_client(
     println!("[+] Got Connection: {:?}", socket_addr);
     let (rx, wr) = stream.into_split();
     let wr = Arc::new(Mutex::new(wr));
-    let mut pending_interval = time::interval(time::Duration::from_millis(700));
     loop {
-        tokio::select! {
-            Ok(_) = rx.readable() => {
-                let wr = Arc::clone(&wr);
-                let mut buffer = vec![0; 1024];
-                let n = match rx.try_read(&mut buffer) {
-                    Ok(0) => break Ok(()),
-                    Ok(n) => n,
-                    Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
-                    Err(e) => return Err(e.into()),
-                };
-                println!("[+] Got {:?}", String::from_utf8_lossy(&buffer[..n]));
-                let mut input = &buffer[..n];
-                loop {
-                    let (parsed, rem) = Parser::parse_resp(input)?;
-                    let mut cmd = CmdBuilder::from_resp(
-                        parsed,
-                        redis.clone(),
-                        config.clone(),
-                        slaves.clone(),
-                        streams.clone(),
-                        stream_senders.clone(),
-                        Some(socket_addr),
-                        Some(wr.clone())
+        if let Ok(_) = rx.readable().await {
+            let wr = Arc::clone(&wr);
+            let mut buffer = vec![0; 1024];
+            let n = match rx.try_read(&mut buffer) {
+                Ok(0) => break Ok(()),
+                Ok(n) => n,
+                Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
+                Err(e) => return Err(e.into()),
+            };
+            println!("[+] Got {:?}", String::from_utf8_lossy(&buffer[..n]));
+            let mut input = &buffer[..n];
+            loop {
+                let (parsed, rem) = Parser::parse_resp(input)?;
+                let mut cmd = CmdBuilder::from_resp(
+                    parsed,
+                    redis.clone(),
+                    config.clone(),
+                    slaves.clone(),
+                    streams.clone(),
+                    stream_senders.clone(),
+                    Some(socket_addr),
+                    Some(wr.clone())
                     );
-                    let resp = cmd.run().await;
-                    if wr.lock().await.writable().await.is_ok() {
-                        match wr.lock().await.try_write(&resp.serialize()) {
-                            Ok(_n) => (),
-                            Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
-                            Err(e) => return Err(e.into()),
-                        }
+                let resp = cmd.run().await;
+                if wr.lock().await.writable().await.is_ok() {
+                    match wr.lock().await.try_write(&resp.serialize()) {
+                        Ok(_n) => (),
+                        Err(ref e) if e.kind() == tokio::io::ErrorKind::WouldBlock => continue,
+                        Err(e) => return Err(e.into()),
                     }
-                    if rem.is_empty() {
-                        break;
-                    }
-                    input = rem;
-                };
-            }
-            _ = pending_interval.tick() => {
-                redis::apply_all_pending_updates(slaves.clone()).await;
-            }
+                }
+                if rem.is_empty() {
+                    break;
+                }
+                input = rem;
+            };
+            redis::apply_all_pending_updates(slaves.clone()).await;
         }
     }
 }
