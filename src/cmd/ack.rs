@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use crate::resp::RespType;
 use crate::resp_array_of_bulks;
 
-use crate::cmd::Cmd;
+use crate::cmd::{Cmd, CmdType};
 use crate::redis::{AMSlaves, AMConfig, add_pending_update_resp};
 
 pub struct Ack;
@@ -11,6 +11,10 @@ pub struct Ack;
 impl Cmd for Ack {
     async fn run(&mut self) -> RespType {
         RespType::WildCard("".into())
+    }
+
+    fn cmd_type(&self) -> CmdType {
+        CmdType::ACK
     }
 }
 
@@ -24,6 +28,10 @@ impl Cmd for GetAck {
     async fn run(&mut self) -> RespType {
         add_pending_update_resp(self.slaves.clone(), &resp_array_of_bulks!("REPLCONF", "GETACK", "*")).await;
         resp_array_of_bulks!("REPLCONF", "ACK", self.config.lock().await.replica_of.master_repl_offset)
+    }
+
+    fn cmd_type(&self) -> CmdType {
+        CmdType::GETACK
     }
 }
 

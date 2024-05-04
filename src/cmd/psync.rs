@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 
 use crate::resp::RespType;
-use crate::cmd::{Cmd, CmdError};
+use crate::cmd::{Cmd, CmdError, CmdType};
 use crate::redis::{AMRedisDB, AMConfig, AMSlaves, db_as_rdb};
 use crate::slave_meta::{WriteStream, SlaveMeta};
 use crate::rdb::RDBHeader;
@@ -54,6 +54,10 @@ impl Cmd for Psync {
             });
 
         RespType::WildCard(msg)
+    }
+
+    fn cmd_type(&self) -> CmdType {
+        CmdType::PSYNC
     }
 }
 

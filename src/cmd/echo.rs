@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use crate::resp::RespType;
 
-use crate::cmd::{Cmd, CmdError};
+use crate::cmd::{Cmd, CmdError, CmdType};
 use crate::utils::unpack_bulk_string;
 
 pub struct Echo {
@@ -12,6 +12,10 @@ pub struct Echo {
 impl Cmd for Echo {
     async fn run(&mut self) -> RespType {
         RespType::BulkString(self.msg.clone())
+    }
+
+    fn cmd_type(&self) -> CmdType {
+        CmdType::ECHO
     }
 }
 

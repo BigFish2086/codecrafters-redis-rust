@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use crate::resp::RespType;
 
-use crate::cmd::Cmd;
+use crate::cmd::{Cmd, CmdType};
 
 pub struct Ping;
 
@@ -9,6 +9,10 @@ pub struct Ping;
 impl Cmd for Ping {
     async fn run(&mut self) -> RespType {
         RespType::SimpleString("PONG".to_string())
+    }
+
+    fn cmd_type(&self) -> CmdType {
+        CmdType::PING
     }
 }
 
@@ -18,6 +22,10 @@ pub struct ReplConf;
 impl Cmd for ReplConf {
     async fn run(&mut self) -> RespType {
         RespType::SimpleString("OK".to_string())
+    }
+
+    fn cmd_type(&self) -> CmdType {
+        CmdType::REPLCONF
     }
 }
 
@@ -29,6 +37,10 @@ pub struct ErrCmd {
 impl Cmd for ErrCmd {
     async fn run(&mut self) -> RespType {
         RespType::SimpleError(self.err_msg.clone())
+    }
+
+    fn cmd_type(&self) -> CmdType {
+        CmdType::ERR_CMD
     }
 }
 

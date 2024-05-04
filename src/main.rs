@@ -13,7 +13,7 @@ mod stream_entry;
 mod utils;
 
 use crate::{
-    cmd::{cmd_builder::CmdBuilder, Cmd},
+    cmd::{cmd_builder::CmdBuilder, Cmd, CmdType},
     config::{Config, Role},
     parser::Parser,
     rdb::RDBParser,
@@ -36,13 +36,6 @@ use tokio::{
     sync::Mutex,
     time,
 };
-// pub type RedisDB = HashMap<ValueType, DataEntry>;
-// pub type StreamDB = HashMap<ValueType, StreamEntry>;
-//
-// // TODO: what if entered dict has same key as streams?
-// pub type AMConfig = Arc<Mutex<Config>>;
-// pub type AMStreams = Arc<Mutex<StreamDB>>;
-// pub type AMStreamSenders = Arc<Mutex<HashMap<String, Sender<RespType>>>>;
 
 async fn handle_client(
     stream: TcpStream,
@@ -223,7 +216,7 @@ async fn setup_replica(
             None,
         );
         let resp = cmd.run().await;
-        let replica_need_to_respond = false; // matches!(cmd, Cmd::GetAck);
+        let replica_need_to_respond = matches!(cmd.cmd_type(), CmdType::GETACK);
         redis::incr_master_repl_offset(
             config.clone(),
             (input_len_before_parsing - rem.len()) as u64,
@@ -285,7 +278,7 @@ async fn replica_handle_master_connection(
             None,
             None,
         );
-        let replica_need_to_respond = false; // matches!(cmd, Cmd::GetAck);
+        let replica_need_to_respond = matches!(cmd.cmd_type(), CmdType::GETACK);
         let resp = cmd.run().await;
         redis::incr_master_repl_offset(
             config.clone(),

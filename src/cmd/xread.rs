@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::cmd::{Cmd, CmdError};
+use crate::cmd::{Cmd, CmdError, CmdType};
 use crate::resp::RespType;
 use crate::redis::{AMStreamSenders, AMStreams, get_stream_reciver};
 use crate::utils::unpack_bulk_string;
@@ -48,10 +48,14 @@ impl Cmd for XRead {
             };
             if let Ok(res) = time::timeout(dur, block_read).await {
                 let (key, entry_resp) = res.unwrap();
-                return Array(vec![Array(vec![BulkString(key.clone()), entry_resp])]);
+                return Array(vec![Array(vec![BulkString(key.clone()), Array(vec![entry_resp])])]);
             }
         }
         WildCard("$-1\r\n".into())
+    }
+
+    fn cmd_type(&self) -> CmdType {
+        CmdType::XREAD
     }
 }
 

@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::cmd::{Cmd, CmdError};
+use crate::cmd::{Cmd, CmdError, CmdType};
 use crate::resp::RespType;
 use crate::redis::AMRedisDB;
 use crate::utils::unpack_bulk_string;
@@ -22,6 +22,10 @@ impl Cmd for Keys {
         }
         drop(dict_guard);
         RespType::Array(result)
+    }
+
+    fn cmd_type(&self) -> CmdType {
+        CmdType::KEYS
     }
 }
 

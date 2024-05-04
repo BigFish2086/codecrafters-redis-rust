@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use crate::resp::RespType;
 
-use crate::cmd::{Cmd, CmdError};
+use crate::cmd::{Cmd, CmdError, CmdType};
 use crate::redis::AMConfig;
 use crate::utils::unpack_bulk_string;
 
@@ -14,6 +14,10 @@ pub struct Info {
 impl Cmd for Info {
     async fn run(&mut self) -> RespType {
         RespType::BulkString(self.config.lock().await.get_info(self.section.clone()))
+    }
+
+    fn cmd_type(&self) -> CmdType {
+        CmdType::INFO
     }
 }
 

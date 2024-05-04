@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::cmd::{Cmd, CmdError};
+use crate::cmd::{Cmd, CmdError, CmdType};
 use crate::resp_array_of_bulks;
 use crate::resp::RespType;
 use crate::redis::AMConfig;
@@ -23,6 +23,10 @@ impl Cmd for ConfigGet {
                 .get(&self.param)
                 .unwrap_or(&"-1".to_string())
         )
+    }
+
+    fn cmd_type(&self) -> CmdType {
+        CmdType::CONFIG_GET
     }
 }
 

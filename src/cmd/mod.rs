@@ -20,6 +20,32 @@ use crate::resp::RespType;
 #[async_trait]
 pub trait Cmd {
     async fn run(&mut self) -> RespType;
+
+    fn cmd_type(&self) -> CmdType;
+}
+
+pub enum CmdType {
+    PING,
+    ECHO,
+    INFO,
+    CONFIG_GET,
+    ERR_CMD,
+
+    KEYS,
+    TYPE,
+
+    SET,
+    GET,
+    WAIT,
+
+    ACK,
+    GETACK,
+    REPLCONF,
+    PSYNC,
+
+    XADD,
+    XRANGE,
+    XREAD,
 }
 
 #[derive(Debug, PartialEq, thiserror::Error)]

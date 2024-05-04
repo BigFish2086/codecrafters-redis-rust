@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use crate::resp::RespType;
 use crate::resp_array_of_bulks;
 use crate::utils::unpack_bulk_string;
-use crate::cmd::{Cmd, CmdError};
+use crate::cmd::{Cmd, CmdError, CmdType};
 use crate::redis::{AMRedisDB, AMSlaves, add_pending_update_resp};
 use crate::data_entry::{ValueType, DataEntry};
 
@@ -28,6 +28,10 @@ impl Cmd for Set {
         drop(dict_guard);
         add_pending_update_resp(self.slaves.clone(), &self.as_resp()).await;
         RespType::SimpleString("OK".to_string())
+    }
+
+    fn cmd_type(&self) -> CmdType {
+        CmdType::SET
     }
 }
 

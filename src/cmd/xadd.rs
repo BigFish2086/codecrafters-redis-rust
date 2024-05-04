@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::cmd::{Cmd, CmdError};
+use crate::cmd::{Cmd, CmdError, CmdType};
 use crate::resp::RespType;
 use crate::redis::{AMStreams, AMStreamSenders};
 use crate::data_entry::ValueType;
@@ -39,6 +39,10 @@ impl Cmd for XAdd {
             }
             Err(reason) => SimpleError(reason),
         }
+    }
+
+    fn cmd_type(&self) -> CmdType {
+        CmdType::XADD
     }
 }
 

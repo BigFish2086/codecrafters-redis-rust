@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use crate::resp::RespType;
 
-use crate::cmd::{Cmd, CmdError};
+use crate::cmd::{Cmd, CmdError, CmdType};
 use crate::redis::AMRedisDB;
 use crate::data_entry::ValueType;
 use crate::utils::unpack_bulk_string;
@@ -27,6 +27,10 @@ impl Cmd for Get {
             }
             None => RespType::Null,
         }
+    }
+
+    fn cmd_type(&self) -> CmdType {
+        CmdType::GET
     }
 }
 

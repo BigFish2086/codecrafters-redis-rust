@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::cmd::{Cmd, CmdError};
+use crate::cmd::{Cmd, CmdError, CmdType};
 use crate::resp::RespType;
 use crate::redis::AMSlaves;
 use crate::utils::unpack_bulk_string;
@@ -73,6 +73,10 @@ impl Cmd for Wait {
             num_acks -= 1;
         }
         Integer(num_acks as i64)
+    }
+
+    fn cmd_type(&self) -> CmdType {
+        CmdType::WAIT
     }
 }
 

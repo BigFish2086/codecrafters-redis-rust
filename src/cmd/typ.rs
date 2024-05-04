@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::cmd::{Cmd, CmdError};
+use crate::cmd::{Cmd, CmdError, CmdType};
 use crate::resp::RespType;
 use crate::redis::{AMRedisDB, AMStreams};
 use crate::utils::unpack_bulk_string;
@@ -33,6 +33,10 @@ impl Cmd for Type {
         } else {
             SimpleString("none".to_string())
         }
+    }
+
+    fn cmd_type(&self) -> CmdType {
+        CmdType::TYPE
     }
 }
 

@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::cmd::{Cmd, CmdError};
+use crate::cmd::{Cmd, CmdError, CmdType};
 use crate::resp::RespType;
 use crate::redis::AMStreams;
 use crate::data_entry::ValueType;
@@ -24,6 +24,10 @@ impl Cmd for XRange {
             }
             None => RespType::WildCard("*0\r\n".into()),
         }
+    }
+
+    fn cmd_type(&self) -> CmdType {
+        CmdType::XRANGE
     }
 }
 
