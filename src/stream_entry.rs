@@ -34,12 +34,15 @@ impl StreamID {
         }
     }
 
-    pub fn to_xread(id: String) -> Self {
+    pub fn to_xread(id: String, last_stream_id: &StreamID) -> Self {
         match id.split("-").collect::<Vec<_>>().as_slice() {
             &[mt, sn] => {
                 let millis = mt.parse::<u128>().expect("Invalid Stream ID <millis:u128>");
                 let mut seq = sn.parse::<u64>().expect("Invalid Stream ID <seq:u64>");
                 Self { millis, seq }
+            }
+            &[mt @ "$"] => {
+                last_stream_id.clone()
             }
             &[mt] => {
                 let millis = mt.parse::<u128>().expect("Invalid Stream ID <millis:u128>");
@@ -83,6 +86,7 @@ pub struct StreamEntry {
     // - How to store them as Radix Trees as mentioned in the Redis Streams Docs?
     stream_ids_order: BTreeMap<u128, VecDeque<u64>>,
     data: HashMap<StreamID, BTreeMap<String, String>>,
+    last_stream_id: StreamID,
 }
 
 impl StreamEntry {
@@ -90,6 +94,7 @@ impl StreamEntry {
         Self {
             stream_ids_order: BTreeMap::new(),
             data: HashMap::new(),
+            last_stream_id: StreamID { millis: u128::MIN, seq: u64::MIN },
         }
     }
 
@@ -124,7 +129,7 @@ impl StreamEntry {
 
     pub fn query_xread(&self, id: String) -> (RespType, bool) {
         use RespType::*;
-        let stream_id = StreamID::to_xread(id);
+        let stream_id = StreamID::to_xread(id, &self.last_stream_id);
         let stream_upper_bound = StreamID { millis: u128::MAX, seq: u64::MAX };
         let mut result = Vec::new();
         let mut hash_items = false;
@@ -182,7 +187,7 @@ impl StreamEntry {
         }
     }
 
-    fn check_id(&self, id: &StreamID) -> Result<(), String> {
+    fn check_id(&mut self, id: &StreamID) -> Result<(), String> {
         // 0-0 not allowed
         if id.millis == 0 && id.seq == 0 {
             return Err("The ID specified in XADD must be greater than 0-0".to_owned());
@@ -195,6 +200,7 @@ impl StreamEntry {
                 return Err("The ID specified in XADD is equal or smaller than the target stream top item".to_owned());
             }
         }
+        self.last_stream_id = id.clone();
         Ok(())
     }
 }
