@@ -62,7 +62,7 @@ pub async fn db_as_rdb(dict: AMRedisDB) -> Vec<u8> {
 
 pub async fn apply_all_pending_updates(slaves: AMSlaves) -> u64 {
     let mut updates_done = 0;
-    let slaves_guard = slaves.lock().await;
+    let mut slaves_guard = slaves.lock().await;
     let slaves_clone: HashMap<SocketAddr, SlaveMeta> = slaves_guard
         .iter()
         .filter_map(|(socket_addr, slave_meta)| {
@@ -73,7 +73,6 @@ pub async fn apply_all_pending_updates(slaves: AMSlaves) -> u64 {
             }
         })
         .collect();
-    drop(slaves_guard);
     let mut fetches = stream::iter(slaves_clone.into_iter().map(
         |(_socket_addr, mut slave_meta)| async move {
             return slave_meta.apply_pending_updates().await;
@@ -81,7 +80,6 @@ pub async fn apply_all_pending_updates(slaves: AMSlaves) -> u64 {
     ))
     .buffer_unordered(8);
     while let Some(result) = fetches.next().await {
-        let mut slaves_guard = slaves.lock().await;
         match result {
             UpdateState::Success(socket_addr, expected_incr, actual_incr) => {
                 println!("[+] Success: Clear(SocketAddr: {:?})", socket_addr);
@@ -111,7 +109,7 @@ pub async fn apply_all_pending_updates(slaves: AMSlaves) -> u64 {
                 }
             }
         };
-        drop(slaves_guard);
     }
+    drop(slaves_guard);
     return updates_done;
 }
